@@ -148,6 +148,7 @@ input[type="checkbox"] { min-height: auto; width: auto; }
 }
 .button:hover:not(:disabled) { background: #e5f1fb; border-color: #7ab5e5; }
 .button:disabled { color: #888; cursor: not-allowed; }
+#forgetToken[hidden] { display: none; }
 .danger { color: #8d2222; }
 .small { min-width: 72px; }
 #connectButton { grid-column: 1 / -1; }
@@ -202,6 +203,40 @@ canvas { background: #fff; border: 1px solid #777; display: block; height: 230px
 .modem-card .separator + .card-heading { position: relative; }
 .modem-card .separator + .card-heading h3 { top: -18px; }
 
+.sniffer-notice {
+  background: #fff8df;
+  border: 1px solid #d6bd78;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  margin-bottom: 14px;
+  padding: 7px;
+}
+.sniffer-settings, .sniffer-rule { margin-bottom: 14px; }
+.sniffer-settings-grid, .sniffer-rule-grid { align-items: end; display: grid; gap: 6px; }
+.sniffer-settings-grid { grid-template-columns: 1fr 1fr 1.5fr 1fr auto auto; }
+.sniffer-rule-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sniffer-columns { display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sniffer-column { min-height: 340px; }
+.sniffer-data {
+  background: #f7f7f7;
+  border: 1px solid #bbb;
+  font: 11px/1.5 Consolas, monospace;
+  height: 210px;
+  overflow: auto;
+  padding: 6px;
+}
+.sniffer-table { min-width: 0; }
+.sniffer-table td, .sniffer-table th { text-align: left; }
+.sniffer-rule-list { border-top: 1px solid #d7d7d7; margin-top: 10px; padding-top: 7px; }
+.sniffer-rule-list-heading { align-items: center; display: flex; flex-wrap: wrap; gap: 5px 12px; justify-content: space-between; margin-bottom: 5px; }
+.sniffer-rule-list table { min-width: 460px; }
+.sniffer-rfid { border-top: 1px solid #d7d7d7; margin-top: 28px; padding-top: 8px; }
+.sniffer-rfid code, .sniffer-record dd { overflow-wrap: anywhere; }
+.sniffer-record { display: grid; gap: 12px 8px; grid-template-columns: 64px minmax(0, 1fr); margin: 20px 0; }
+.sniffer-record dd { margin: 0; }
+.sniffer-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+
 .toast {
   background: #333;
   border: 1px solid #222;
@@ -227,6 +262,9 @@ dialog h2 { font-size: 16px; margin: 0; }
   .memory-grid { grid-template-areas: "tags" "controls" "special"; }
   .memory-grid > .tag-card > .table-wrap { min-height: 120px; }
   .test-grid { grid-template-areas: "jammer" "rssi" "modem"; grid-template-columns: minmax(0, 1fr); }
+  .sniffer-settings-grid, .sniffer-rule-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sniffer-columns { grid-template-columns: minmax(0, 1fr); }
+  .sniffer-column { min-height: 0; }
   #panel-connection .tag-card { min-height: 450px; }
   #panel-connection .tag-card > .table-wrap { min-height: 150px; }
 }

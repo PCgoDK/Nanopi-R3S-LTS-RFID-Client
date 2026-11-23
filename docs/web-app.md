@@ -44,6 +44,8 @@ ssh -L 8080:127.0.0.1:8080 <bruger>@<NanoPi-IP>
 
 Åbn derefter `http://127.0.0.1:8080`. Hvis du ændrer appen til at lytte på en anden adresse end loopback, kræver den et `RFID_APP_TOKEN`; brug kun den mulighed bag en korrekt konfigureret TLS-proxy, og eksponér aldrig ukrypteret HTTP direkte mod internettet.
 
+Når et app-token indtastes, gemmes det i browserens lokale lager og bruges automatisk ved senere besøg på samme adresse. Enhver med adgang til browserprofilen kan læse tokenet; brug ikke denne funktion på en delt enhed. Knappen **Glem token** fjerner det fra den aktuelle browserprofil. Fjernelse tilbagekalder ikke tokenet på serveren.
+
 Nyttige servicekommandoer:
 
 ```sh
@@ -76,6 +78,10 @@ I fanen **Forbindelse & EPC** vælges den serielle enhed og 115200 baud. Brug om
 - Modemparameterforespørgsler og kommandoer til kanal-RSSI og blokeringsscan.
 
 Graferne er tomme, indtil der er modtaget målinger. De viser det kanalinterval og de fortegnede dBm-værdier, som læseren returnerer; de seneste resultater bevares ved faneskift og ændring af vinduets størrelse. Et ugyldigt svar erstatter ikke de tidligere målinger.
+
+Fanen **Datasniffer** er en designvisning med eksempeldata; dens kontroller er deaktiveret og ændrer ikke netværket eller læseren. Regellisten viser én eksempelregel og er beregnet til flere navngivne regler. Planen er, at bridgens Start/Stop-tilstand huskes efter genstart, og at trafik fra hostsiden til printerens port 8080 omdirigeres til webappen; printerens egen tjeneste på den port kan dermed ikke nås fra hostsiden. Den foreløbige udtrækslogik søger efter første forekomst af en tekst og uddrager enten et angivet antal Unicode-tegn eller teksten frem til første afslutningstekst, som ikke medtages. Binære data uden for udtrækket kan forekomme; manglende, ufuldstændige eller ugyldige UTF-8-udtræk markeres som fejl. TCP-opsamling, jobinddeling, RFID-kobling, lagring, CSV, omdirigering og bridgestyring er endnu ikke implementeret.
+
+Den planlagte integration skal lade NanoPi'en optræde som en emuleret FX7500 via LLRP og sende EPC'er til Zebra RFID Server. LLRP-serveren og forbindelsen til læseren er endnu ikke implementeret. Udtræk skal sendes separat via serverens eksisterende `POST /api/v1/tag-reads` over HTTPS og et bearer-token. Et oprettet læser-ID og en gyldig EPC er påkrævet; udtrækkene medsendes som JSON i `raw_payload`. De to afsendelser kan give dobbelte registreringer. Serverens aktuelle API og portal viser ikke udtrækket, og serveren bevarer kun første og seneste post pr. læser/EPC. `NoTag` kan ikke indsendes, så den fulde log skal bevares lokalt. En intern CA skal være betroet af NanoPi'en eller angives til REST-afsenderen; certifikatkontrol slås ikke fra. Automatisk kø, manuel gensendelse og brugerindstillinger er endnu ikke implementeret, og ingen data afsendes fra designvisningen. Ved timeout eller serverfejl kan det være uklart, om en post blev gemt; gentag ikke ukritisk uden at afklare det.
 
 Regionerne følger [M5Stacks regionsdefinition](https://github.com/m5stack/M5Unit-RFID/blob/main/src/uhf/uhf.hpp). Japan vises som utilgængelig, da den tilgængelige protokol ikke dokumenterer en regionskode for Japan. Ved regionsvalg beregnes frekvenserne ud fra protokollens kanalformler og de almindelige frekvensbånd; bortset fra China2's 20 kanaler er antallet ikke bekræftet i protokollen. Et valg ændrer ikke læseren, før den tilhørende Sæt-knap bruges. Før kanalskift kontrollerer appen læserens aktuelle region. Frekvensvalg er ikke en bekræftelse på firmwareunderstøttelse eller på, at radioindstillingerne overholder lokale regler.
 

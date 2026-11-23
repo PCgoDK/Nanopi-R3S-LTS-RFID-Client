@@ -13,8 +13,11 @@
     <div>
       <h1>UHF RFID Reader</h1>
     </div>
-    <div class="connection-badge" id="connectionBadge" aria-live="polite">
-      <span class="status-dot"></span><span id="connectionText">Ikke forbundet</span>
+    <div class="inline-actions">
+      <button class="button secondary" id="forgetToken" type="button" hidden>Glem token</button>
+      <div class="connection-badge" id="connectionBadge" aria-live="polite">
+        <span class="status-dot"></span><span id="connectionText">Ikke forbundet</span>
+      </div>
     </div>
   </header>
 
@@ -23,6 +26,7 @@
       <button class="tab active" data-tab="connection" aria-selected="true">Forbindelse &amp; EPC</button>
       <button class="tab" data-tab="memory" aria-selected="false">Læs &amp; skriv taghukommelse</button>
       <button class="tab" data-tab="test" aria-selected="false">Test &amp; modem</button>
+      <button class="tab" data-tab="sniffer" aria-selected="false">Datasniffer</button>
     </nav>
 
     <section class="tab-panel active" id="panel-connection">
@@ -277,6 +281,122 @@
         </section>
       </div>
     </section>
+
+    <section class="tab-panel" id="panel-sniffer" hidden>
+      <div class="sniffer-notice" role="note">
+        <strong>Designvisning — eksempeldata</strong>
+        <span>Ingen bridge, opsamling eller RFID-læsning er aktiv fra dette faneblad endnu.</span>
+      </div>
+
+      <section class="card sniffer-settings">
+        <div class="card-heading"><h2>Forbindelse og job</h2></div>
+        <div class="sniffer-settings-grid">
+          <label>Host-port<input value="WAN" disabled></label>
+          <label>Printer-port<input value="LAN" disabled></label>
+          <label>Printer TCP/IP<input value="192.168.1.150:9100" disabled></label>
+          <label>Jobpause (sek.)<input type="number" value="2" disabled></label>
+          <button class="button primary" disabled>Start bridge</button>
+          <button class="button secondary" disabled>Stop bridge</button>
+        </div>
+        <p class="hint">Opsætning og status er kun vist som design — netværksindstillingerne ændres ikke.</p>
+        <p class="hint">Planlagt: Start/Stop huskes efter genstart. <strong>http://192.168.1.150:8080/</strong> åbner webappen fra hostsiden; øvrig trafik videresendes til printeren.</p>
+        <p class="hint warning">Printerens egen port 8080 kan ikke nås fra hostsiden, mens omdirigeringen er aktiv.</p>
+      </section>
+
+      <section class="card sniffer-rule">
+        <div class="card-heading"><h2>Udvælgelsesregel</h2></div>
+        <div class="sniffer-rule-grid">
+          <label>Navn<input value="Udvalg 1" disabled></label>
+          <label>Søg efter<input value="^FD" disabled></label>
+          <label>Afslut med<select disabled><option>Antal tegn</option><option selected>Afslutningstekst</option></select></label>
+          <label>Antal tegn frem<input type="number" placeholder="Kun ved antal tegn" disabled></label>
+          <label>Afslutningstekst<input value="^FS" disabled></label>
+          <button class="button primary" disabled>Anvend regel</button>
+          <label>Eksempel på udtræk<input value="136556" disabled></label>
+        </div>
+        <p class="hint">Vælg enten antal tegn eller afslutningstekst. Første forekomst anvendes; afslutningsteksten medtages ikke.</p>
+        <div class="sniffer-rule-list">
+          <div class="sniffer-rule-list-heading">
+            <strong>Regler · eksempel</strong>
+            <div class="inline-actions">
+              <button class="button secondary" disabled>Tilføj regel</button>
+              <button class="button secondary" disabled>Fjern valgt regel</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="sniffer-table">
+              <thead><tr><th>Navn</th><th>Søg efter</th><th>Afslut med</th><th>Grænse</th></tr></thead>
+              <tbody><tr><td>Udvalg 1</td><td>^FD</td><td>Afslutningstekst</td><td>^FS</td></tr></tbody>
+            </table>
+          </div>
+          <p class="hint">Hvert printjob kan behandles med flere navngivne regler.</p>
+        </div>
+      </section>
+
+      <section class="card sniffer-settings">
+        <div class="card-heading"><h2>Zebra RFID-server · planlagt</h2></div>
+        <div class="sniffer-rule-grid">
+          <label>Serveradresse<input value="https://192.168.1.151" disabled></label>
+          <label>Læser-ID<input type="number" placeholder="Oprettes på serveren" disabled></label>
+          <label>Afsendelse<select disabled><option>Automatisk og manuel</option></select></label>
+          <label>REST-token<input type="password" placeholder="Angives senere" disabled></label>
+        </div>
+        <p class="hint">Planlagt: NanoPi'en vises som en emuleret FX7500 via LLRP-port 5084. Udtræk sendes separat via REST; serveradressen skal kunne ændres.</p>
+        <p class="hint">NoTag og hele loggen gemmes lokalt; serveren modtager kun gyldige EPC'er.</p>
+        <p class="hint warning">Serveren bevarer kun første og seneste post pr. læser/EPC og viser ikke udtrækket i sin portal.</p>
+      </section>
+
+      <div class="sniffer-columns">
+        <section class="card sniffer-column">
+          <div class="card-heading"><h2>1. Indgående data</h2></div>
+          <p class="hint">Eksempel på printdata · TCP port 9100</p>
+          <pre class="sniffer-data" aria-label="Eksempel på indgående printdata">^XA
+^CF0,80,80
+
+^FX Barcode
+^BY4,2,270
+^FO150,100^BCN,270,N^FD136556^FS
+^FO50,400^A0N,140,140^FD136556^FS
+
+^PQ1,0,1,Y
+^XZ</pre>
+          <p class="hint">Flere TCP-pakker samles til et job. Binær grafik kan også forekomme.</p>
+        </section>
+
+        <section class="card sniffer-column">
+          <div class="card-heading"><h2>2. Udvalgte værdier og RFID</h2></div>
+          <div class="table-wrap">
+            <table class="sniffer-table">
+              <thead><tr><th>Felt</th><th>Værdi</th></tr></thead>
+              <tbody><tr><td>Udvalg 1</td><td>136556</td></tr></tbody>
+            </table>
+          </div>
+          <div class="sniffer-rfid">
+            <strong>RFID · eksempel</strong>
+            <p class="hint">EPC læst efter printjobbet:</p>
+            <code>3000123456789ABCDEF00001</code>
+            <p class="hint">Intet tag vises som NoTag. Usikre koblinger skal afklares manuelt.</p>
+          </div>
+        </section>
+
+        <section class="card sniffer-column">
+          <div class="card-heading"><h2>3. Udtræk til log</h2></div>
+          <p class="hint">Eksempel på en gemt post</p>
+          <dl class="sniffer-record">
+            <dt>Dato/tid</dt><dd>2026-01-01 10:42:09</dd>
+            <dt>Udvalg 1</dt><dd>136556</dd>
+            <dt>EPC</dt><dd>3000123456789ABCDEF00001</dd>
+            <dt>Status</dt><dd>Eksempel</dd>
+          </dl>
+          <div class="sniffer-actions">
+            <button class="button secondary" disabled>Vis log og kø</button>
+            <button class="button secondary" disabled>Gem som CSV</button>
+            <button class="button secondary" disabled>Send data</button>
+          </div>
+          <p class="hint">Videresendelse til RFID-serveren tilføjes senere.</p>
+        </section>
+      </div>
+    </section>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </main>
 
@@ -284,9 +404,9 @@
     <form method="dialog" id="tokenForm">
       <p class="eyebrow">ADGANGSKONTROL</p>
       <h2>App-token</h2>
-      <p>Denne NanoPi-app kræver et token. Tokenet gemmes kun i denne browsersession.</p>
+      <p>Denne NanoPi-app kræver et token. Tokenet gemmes i denne browsers profil, indtil du vælger Glem token.</p>
       <label>Token <input id="tokenInput" type="password" autocomplete="current-password" required></label>
-      <div class="dialog-actions"><button class="button secondary" value="cancel">Annuller</button><button class="button primary" id="tokenSubmit" value="ok">Fortsæt</button></div>
+      <div class="dialog-actions"><button class="button secondary" value="cancel" formnovalidate>Annuller</button><button class="button primary" id="tokenSubmit" value="ok">Fortsæt</button></div>
     </form>
   </dialog>
 </body>

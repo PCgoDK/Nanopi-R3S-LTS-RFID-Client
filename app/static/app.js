@@ -39,7 +39,7 @@ function showTokenDialog() {
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Content-Type", "application/json");
-  const token = sessionStorage.getItem("rfid-app-token");
+  const token = localStorage.getItem("rfid-app-token");
   if (token) headers.set("X-API-Token", token);
   const response = await fetch(path, { ...options, headers });
   let data;
@@ -49,6 +49,9 @@ async function api(path, options = {}) {
     data = {};
   }
   if (response.status === 401) {
+    if (token && localStorage.getItem("rfid-app-token") === token) {
+      localStorage.removeItem("rfid-app-token");
+    }
     showTokenDialog();
     throw new Error(data.detail || "App-token mangler eller er forkert.");
   }
@@ -752,16 +755,23 @@ tokenForm.addEventListener("submit", (event) => {
     tokenDialog.close("cancel");
     return;
   }
-  const token = $("tokenInput").value.trim();
-  if (!token) return;
-  sessionStorage.setItem("rfid-app-token", token);
-  $("tokenInput").value = "";
-  tokenDialog.close("ok");
   guarded(async () => {
+    const token = $("tokenInput").value.trim();
+    if (!token) return;
+    localStorage.setItem("rfid-app-token", token);
+    sessionStorage.removeItem("rfid-app-token");
+    $("tokenInput").value = "";
+    tokenDialog.close("ok");
     await refreshPorts();
     await refreshState();
   });
 });
+
+$("forgetToken").addEventListener("click", () => guarded(async () => {
+  localStorage.removeItem("rfid-app-token");
+  sessionStorage.removeItem("rfid-app-token");
+  showTokenDialog();
+}));
 
 bindTabs();
 bindActions();
@@ -770,12 +780,15 @@ bindActions();
   try {
     const config = await api("/api/config");
     authRequired = config.auth_required;
-    if (authRequired && !sessionStorage.getItem("rfid-app-token")) showTokenDialog();
+    $("forgetToken").hidden = !authRequired;
+    refreshTimer = setInterval(() => {
+      if (!authRequired || localStorage.getItem("rfid-app-token")) guarded(refreshState);
+    }, 1200);
+    if (authRequired && !localStorage.getItem("rfid-app-token")) showTokenDialog();
     drawChart("jammerChart", chartValues.jammerChart);
     drawChart("rssiChart", chartValues.rssiChart);
     await refreshPorts();
     await refreshState();
-    refreshTimer = setInterval(() => guarded(refreshState), 1200);
   } catch (error) {
     showToast(error.message || String(error), true);
   }
