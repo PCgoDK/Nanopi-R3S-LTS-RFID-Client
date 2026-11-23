@@ -1,0 +1,26 @@
+[Unit]
+Description=NanoPi UHF RFID web client (Tailscale access via Serve)
+After=network.target
+
+[Service]
+Type=simple
+User=rfid-client
+Group=rfid-client
+SupplementaryGroups=dialout
+WorkingDirectory=/opt/nanopi-rfid-client
+EnvironmentFile=/etc/nanopi-rfid-client/nanopi-rfid-client.env
+ExecStart=/opt/nanopi-rfid-client/venv/bin/python -m app
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nanopi-rfid-client
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

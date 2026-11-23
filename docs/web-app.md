@@ -4,44 +4,66 @@ Browserappen serveres af NanoPi'en og bruger dens UART-forbindelse til M5Stack U
 
 ## Installation
 
-På NanoPi'en skal brugeren, der kører appen, have adgang til serielporten. På Ubuntu kan det normalt gøres med `dialout`-gruppen:
+### Installer som systemtjeneste under `/opt`
+
+På Ubuntu/Debian installerer dette script appen i `/opt/nanopi-rfid-client`, opretter et Python-virtualmiljø, og installerer samt aktiverer `nanopi-rfid-client.service`. Tjenesten kører som den dedikerede systembruger `rfid-client`, som tilføjes gruppen `dialout` for adgang til USB-UART-læseren.
 
 ```sh
-sudo usermod -aG dialout "$USER"
+sudo apt update
+sudo apt install -y git python3 python3-venv
+git clone https://github.com/PCgoDK/Nanopi-R3S-LTS-RFID-Client.git
+cd Nanopi-R3S-LTS-RFID-Client
+sudo sh ./scripts/install-nanopi.sh
 ```
 
-Log ind igen, så den nye gruppetilhørsforhold træder i kraft. Installer derefter appen fra repoets rod:
+Installeringsscriptet skal køres som root på en systemd-baseret Ubuntu/Debian-installation. Det ændrer ikke Ethernet- eller firewallindstillinger. Standardkonfigurationen i `/etc/nanopi-rfid-client/nanopi-rfid-client.env` binder kun til `127.0.0.1:8080`; porten er derfor ikke direkte tilgængelig fra LAN eller internettet.
+
+```sh
+sudo systemctl status nanopi-rfid-client.service
+```
+
+### Privat fjernadgang via Tailscale
+
+Tailscale Serve giver HTTPS-adgang fra enheder, der er godkendt på dit private Tailscale-netværk (tailnet), uden at åbne en port i routeren. Det gør ikke appen offentligt tilgængelig på internettet. Installer Tailscale på NanoPi'en og de klientenheder, der skal have adgang, og log dem ind på samme tailnet. Følg [Tailscales Linux-installationsvejledning](https://tailscale.com/kb/1031/install-linux).
+
+```sh
+sudo tailscale up
+sudo tailscale serve --bg 8080
+sudo tailscale serve status
+```
+
+Følg eventuelle login- eller HTTPS-samtykketrin, som Tailscale viser. Åbn derefter den `https://…ts.net`-adresse, som `tailscale serve status` viser, på en anden enhed i tailnettet. Tailscale Serve-konfigurationen fortsætter efter genstart. Adgangen følger tailnettets adgangskontrol; del ikke enheden med personer, der ikke skal kunne styre RFID-læseren. Brug **ikke** Tailscale Funnel, hvis adgangen skal forblive privat.
+
+Hvis du tidligere har installeret appen med den gamle port, ret `RFID_PORT=8000` til `RFID_PORT=8080` i `/etc/nanopi-rfid-client/nanopi-rfid-client.env`, og genstart tjenesten. Behold `RFID_HOST=127.0.0.1`, så Tailscale er den eneste fjernadgangsvej.
+
+En midlertidig SSH-tunnel kan stadig bruges til lokal adgang:
+
+```sh
+ssh -L 8080:127.0.0.1:8080 <bruger>@<NanoPi-IP>
+```
+
+Åbn derefter `http://127.0.0.1:8080`. Hvis du ændrer appen til at lytte på en anden adresse end loopback, kræver den et `RFID_APP_TOKEN`; brug kun den mulighed bag en korrekt konfigureret TLS-proxy, og eksponér aldrig ukrypteret HTTP direkte mod internettet.
+
+Nyttige servicekommandoer:
+
+```sh
+sudo systemctl status nanopi-rfid-client.service
+sudo journalctl -u nanopi-rfid-client.service -f
+sudo systemctl restart nanopi-rfid-client.service
+```
+
+For at opdatere en installation: hent den ønskede version af repoet på NanoPi'en, og kør `sudo sh ./scripts/install-nanopi.sh` fra repoets rod igen. Scriptet bevarer den eksisterende miljøfil og genstarter tjenesten med den opdaterede kode.
+
+### Manuel udviklingskørsel
+
+Til lokal udvikling uden systemd-tjeneste kan appen stadig startes direkte:
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
-```
-
-Start lokalt på NanoPi'en:
-
-```sh
 python -m app
 ```
-
-Standardadressen binder kun til `127.0.0.1`. For adgang fra andre enheder på LAN'et skal der sættes et stærkt, privat token og en netværksadresse:
-
-```sh
-export RFID_HOST=0.0.0.0
-export RFID_PORT=8000
-export RFID_APP_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-python -m app
-```
-
-Åbn derefter `http://<NanoPi-IP>:8000` i en browser på et betroet LAN. Tokenet indtastes i browseren og opbevares kun i den aktuelle browsersession. Del det ikke, og eksponér ikke port 8000 direkte mod internettet. Appen afviser opstart på en ikke-loopback-adresse, hvis `RFID_APP_TOKEN` mangler.
-
-En sikrere mulighed er at lade appen blive på standardadressen `127.0.0.1` og oprette en SSH-tunnel fra browsermaskinen:
-
-```sh
-ssh -L 8000:127.0.0.1:8000 <bruger>@<NanoPi-IP>
-```
-
-Åbn derefter `http://127.0.0.1:8000` lokalt. Ved direkte LAN-adgang bruges HTTP, så brug kun et betroet netværk eller sæt en TLS-terminerende proxy foran appen.
 
 I fanen **Forbindelse & EPC** vælges den serielle enhed og 115200 baud. Brug om muligt den stabile `/dev/serial/by-id/...`-sti, der er fundet på NanoPi'en; den konkrete sti afhænger af USB-adapteren.
 
