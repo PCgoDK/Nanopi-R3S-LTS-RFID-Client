@@ -3,7 +3,7 @@
 Testet 21. november 2026.
 
 ## Udstyr og forbindelse
-
+https://docs.m5stack.com/en/unit/Unit_UHF-RFID
 - FriendlyElec NanoPi R3S LTS med Ubuntu 24.04.5 LTS, aarch64 og Linux 6.1.141.
 - M5Stack Unit UHF-RFID U107, som ved forespørgsel på hardwareversion svarede `M100 26dBm V1.0`.
 - Silicon Labs CP2102 USB-til-UART-adapter, USB-id `10c4:ea60`. Den blev registreret som `/dev/ttyUSB0`.
