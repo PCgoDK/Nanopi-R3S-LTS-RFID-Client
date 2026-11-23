@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>NanoPi UHF RFID Client</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>UHF RFID Reader</h1>
+    </div>
+    <div class="connection-badge" id="connectionBadge" aria-live="polite">
+      <span class="status-dot"></span><span id="connectionText">Ikke forbundet</span>
+    </div>
+  </header>
+
+  <main>
+    <nav class="tabs" aria-label="RFID-funktioner">
+      <button class="tab active" data-tab="connection" aria-selected="true">Forbindelse &amp; EPC</button>
+      <button class="tab" data-tab="memory" aria-selected="false">Læs &amp; skriv taghukommelse</button>
+      <button class="tab" data-tab="test" aria-selected="false">Test &amp; modem</button>
+    </nav>
+
+    <section class="tab-panel active" id="panel-connection">
+      <div class="workspace-grid">
+        <section class="card tag-card">
+          <div class="card-heading">
+            <div><p class="eyebrow">INVENTORY</p><h2>EPC-tabel</h2></div>
+            <button class="button secondary small" id="clearTags">Ryd</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Nr.</th><th>PC</th><th>EPC</th><th>CRC</th><th>RSSI</th><th>Antal</th></tr></thead>
+              <tbody id="tagRows"><tr><td class="empty" colspan="6">Ingen tags endnu</td></tr></tbody>
+            </table>
+          </div>
+          <div class="receive-heading">
+            <div><p class="eyebrow">SERIEL MODTAGELSE</p><h2>Modtagne rammer</h2></div>
+            <div class="inline-actions">
+              <label class="check-label"><input type="checkbox" id="autoscroll" checked> Autoscroll</label>
+              <button class="button secondary small" id="clearLog">Ryd log</button>
+            </div>
+          </div>
+          <pre class="serial-log" id="serialLog" aria-live="polite">Klar til forbindelse.</pre>
+          <div class="raw-command">
+            <button class="button secondary" id="sendRaw">Send</button>
+            <input id="rawHex" aria-label="Rå UART-ramme i hexadecimal" value="BB 00 22 00 00 22 7E" spellcheck="false">
+          </div>
+          <div class="counter-row">
+            <span>RX: <strong id="rxCounter">0</strong></span>
+            <span>TX: <strong id="txCounter">0</strong></span>
+            <span>Firmware: <strong id="firmwareVersion">—</strong></span>
+            <span>Hardware: <strong id="hardwareVersion">—</strong></span>
+            <button class="button secondary" id="refreshVersions" disabled>Opdatér versioner</button>
+          </div>
+        </section>
+
+        <aside class="control-stack">
+          <section class="card">
+            <div class="card-heading compact"><div><p class="eyebrow">UART</p><h2>Seriel forbindelse</h2></div></div>
+            <div class="form-grid connection-form">
+              <label>Port
+                <span class="input-with-button">
+                  <input id="portSelect" list="serialPorts" placeholder="Vælg eller indtast enhed">
+                  <datalist id="serialPorts"></datalist>
+                  <button class="button secondary icon-button" id="refreshPorts" title="Opdatér porte">↻</button>
+                </span>
+              </label>
+              <label>Baudrate
+                <select id="baudSelect"><option>115200</option><option>57600</option><option>38400</option><option>19200</option><option>9600</option></select>
+              </label>
+              <button class="button primary full-width" id="connectButton">Forbind</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-heading compact"><div><p class="eyebrow">READER</p><h2>Generelle indstillinger</h2></div></div>
+            <div class="form-grid two-col">
+              <label>Modtagerprofil
+                <select id="modeSelect"><option value="00">Høj følsomhed</option><option value="01">Høj tæthed</option><option value="FF">Brugerdefineret</option></select>
+              </label>
+              <button class="button secondary align-end" id="setMode">Sæt profil</button>
+              <label class="check-label"><input id="configEnabled" type="checkbox" checked> Konfiguration aktiv</label>
+              <button class="button secondary" id="saveConfig" title="Gemning afhænger af modulfirmware">Gem konfiguration</button>
+            </div>
+          </section>
+
+          <section class="card rf-channel-card">
+            <div class="card-heading compact"><div><p class="eyebrow">RF</p><h2>RF-kanal</h2></div></div>
+            <div class="form-grid two-col rf-channel-grid">
+              <label>Region
+                <select id="regionCode">
+                  <option value="" selected disabled>Vælg region</option>
+                  <option value="01">China2 (900 MHz)</option>
+                  <option value="04">China1 (800 MHz)</option>
+                  <option value="02">US</option>
+                  <option value="03">Europe</option>
+                  <option value="06">Korea</option>
+                  <option disabled>Japan (ikke dokumenteret)</option>
+                </select>
+              </label>
+              <button class="button secondary" id="setRegion">Sæt region</button>
+              <button class="button secondary align-end" id="getRegion">Hent region</button>
+              <label>RF-frekvens
+                <select id="rfChannel" disabled><option value="">Vælg region først</option></select>
+              </label>
+              <button class="button secondary" id="setChannel">Sæt RF-kanal</button>
+              <button class="button secondary" id="getChannel">Hent RF-kanal</button>
+              <label>Hop-start <input id="hopStart" type="number" value="1" min="0" max="255"></label>
+              <label>Hop-stop <input id="hopStop" type="number" value="5" min="0" max="255"></label>
+              <button class="button secondary" id="insertChannels">Indsæt kanaler</button>
+              <button class="button secondary" id="fhssOff">FHSS fra</button>
+            </div>
+            <p class="hint warning">Frekvenserne er beregnet ud fra protokollen; firmwareunderstøttelse og lokale radioregler skal kontrolleres. Valg af region ændrer ikke læseren, før den sættes.</p>
+          </section>
+
+          <section class="card rf-power-card">
+            <div class="card-heading compact"><div><h2>RF-sendeeffekt</h2></div></div>
+            <div class="form-grid">
+              <label>Effekt
+                <select id="powerSelect"><option value="1800">18 dBm</option><option value="2000">20 dBm</option><option value="2200">22 dBm</option><option value="2400">24 dBm</option><option value="2600" selected>26 dBm</option></select>
+              </label>
+              <button class="button secondary" id="setPower">Sæt effekt</button>
+              <button class="button secondary" id="getPower">Hent effekt</button>
+              <button class="button secondary" id="sleepButton">Dvale</button>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-heading compact"><div><p class="eyebrow">TAG INVENTORY</p><h2>Inventering</h2></div></div>
+            <div class="form-grid two-col">
+              <button class="button primary" id="readSingle">Læs enkelt</button>
+              <label class="check-label"><input id="selectBeforeRead" type="checkbox"> Select før læsning</label>
+              <button class="button secondary" id="cwButton" title="Sender RF-bærebølge i maks. 2 sekunder">CW-test · 2 sek.</button>
+              <label>Antal forespørgsler
+                <input type="number" id="multiCount" value="65535" min="1" max="65535">
+              </label>
+              <button class="button secondary" id="readMulti">Læs flere</button>
+              <button class="button danger" id="stopRead">Stop læsning</button>
+              <label>Varighed (ms)
+                <input type="number" id="continueMs" value="3000" min="100" max="60000">
+              </label>
+              <button class="button secondary full-width" id="continueRead">Fortsæt i valgt tid</button>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-memory" hidden>
+      <div class="workspace-grid memory-grid">
+        <section class="card tag-card">
+          <div class="card-heading"><div><p class="eyebrow">INVENTORY</p><h2>EPC-tabel</h2></div><button class="button secondary small" id="clearMemoryTags">Ryd</button></div>
+          <div class="table-wrap">
+            <table><thead><tr><th>Nr.</th><th>PC</th><th>EPC</th><th>CRC</th><th>Antal</th></tr></thead><tbody id="memoryTagRows"><tr><td class="empty" colspan="5">Ingen tags endnu</td></tr></tbody></table>
+          </div>
+          <p class="hint">Vælg en EPC for at bruge den som mål-tag. Select-parametre sendes separat fra læse-/skrivekommandoen.</p>
+        </section>
+
+        <aside class="control-stack">
+          <div class="card inset-card query-card">
+            <div class="card-heading compact"><div><p class="eyebrow">QUERY</p><h3>Query-parametre</h3></div></div>
+            <div class="form-grid three-col">
+              <label>DR <select id="queryDr"><option value="0">8</option><option value="1" disabled>64/3 (ikke understøttet)</option></select></label>
+              <label>M <select id="queryM"><option value="0">1</option><option value="1" disabled>2</option><option value="2" disabled>4</option><option value="3" disabled>8</option></select></label>
+              <label>TRext <select id="queryTrext"><option value="1">UsePilot</option><option value="0" disabled>No pilot (ikke understøttet)</option></select></label>
+              <label>Sel <select id="querySel"><option value="0">ALL (00)</option><option value="1">ALL (01)</option><option value="2">~SL</option><option value="3">SL</option></select></label>
+              <label>Session <select id="querySession"><option value="0">S0</option><option value="1">S1</option><option value="2">S2</option><option value="3">S3</option></select></label>
+              <label>Target <select id="queryTarget"><option value="0">A</option><option value="1">B</option></select></label>
+              <label>Q <input id="queryQ" type="number" value="4" min="0" max="15"></label>
+            </div>
+            <div class="inline-actions action-row"><button class="button secondary" id="getQuery">Hent Query</button><button class="button primary" id="setQuery">Sæt Query</button></div>
+          </div>
+          <div class="card inset-card select-card">
+            <div class="card-heading compact"><div><p class="eyebrow">SELECT</p><h3>Udvælg tag</h3></div></div>
+            <div class="form-grid three-col">
+              <label>Target <select id="selectTarget"><option value="0">Inventoried S0</option><option value="1">Inventoried S1</option><option value="2">Inventoried S2</option><option value="3">Inventoried S3</option><option value="4">SL</option></select></label>
+              <label>Action <select id="selectAction"><option value="0">Action 0</option><option value="1">Action 1</option><option value="2">Action 2</option><option value="3">Action 3</option><option value="4">Action 4</option><option value="5">Action 5</option><option value="6">Action 6</option><option value="7">Action 7</option></select></label>
+              <label>Bank <select id="selectBank"><option value="1">EPC</option><option value="2">TID</option><option value="3">User</option></select></label>
+              <label>Bit-pointer <input id="selectPointer" value="32" inputmode="numeric"></label>
+              <label>Mask-længde (bit) <input id="selectLength" value="96" inputmode="numeric"></label>
+              <label>Mask (hex) <input id="selectMask" value="" spellcheck="false"></label>
+              <label class="check-label"><input id="selectTruncate" type="checkbox"> Truncate-tag-svar</label>
+            </div>
+            <div class="inline-actions action-row"><button class="button primary" id="setSelect">Sæt Select</button><button class="button secondary" id="getSelect">Hent Select</button><button class="button secondary" id="setSelectMode">Sæt Select-tilstand</button></div>
+          </div>
+          <section class="card memory-operations-card">
+            <div class="card-heading compact"><div><p class="eyebrow">MEMORY</p><h2>Læs &amp; skriv</h2></div></div>
+            <div class="form-grid two-col">
+              <label>Memory bank <select id="memoryBank"><option value="1">EPC</option><option value="2">TID</option><option value="3">User</option><option value="0">Reserved</option></select></label>
+              <label>Word-pointer <input id="wordPointer" value="2" inputmode="numeric"></label>
+              <label>Word-antal <input id="wordCount" value="6" inputmode="numeric"></label>
+              <label>Access password (hex) <input id="accessPassword" value="00000000" maxlength="8" spellcheck="false"></label>
+              <label class="full-width">Data (hex) <input id="memoryData" placeholder="Indtast bytes, fx 00 01 02 03" spellcheck="false"></label>
+              <button class="button primary" id="readMemory">Læs</button>
+              <button class="button danger" id="writeMemory">Skriv</button>
+            </div>
+            <div class="result-box"><span>PC + EPC</span><strong id="selectedTag">—</strong><span>Status</span><strong id="memoryStatus">Klar</strong></div>
+          </section>
+
+          <section class="card protection-card">
+            <div class="card-heading compact"><div><p class="eyebrow">LOCK / KILL</p><h2>Tagbeskyttelse</h2></div></div>
+            <label>Kill password (hex)<input id="killPassword" value="00000000" maxlength="8" spellcheck="false"></label>
+            <div class="lock-grid">
+              <label>Kill <select id="lockKill"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>Access <select id="lockAccess"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>EPC <select id="lockEpc"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>TID <select id="lockTid"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>User <select id="lockUser"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+            </div>
+            <button class="button secondary full-width" id="lockTag">Lock memory</button>
+            <div class="form-grid two-col top-gap">
+              <label>Bekræft permanent kill <input id="killConfirm" placeholder="Skriv KILL" autocomplete="off"></label>
+              <button class="button danger align-end" id="killTag">Kill tag</button>
+            </div>
+            <p class="hint warning">Lock kan være permanent. Kill deaktiverer tagget permanent. Kontrollér mål-tag og passwords før brug.</p>
+          </section>
+
+        </aside>
+
+          <section class="card special-card">
+            <div class="card-heading compact"><div><p class="eyebrow">SPECIAL TAGS</p><h2>Avancerede kommandoer</h2></div></div>
+            <div class="form-grid two-col">
+              <label>Block-pointer <input id="blockPointer" value="0"></label>
+              <label>Block-range <input id="blockRange" value="1"></label>
+              <label class="full-width">Block-mask (hex) <input id="blockMask" value="0700"></label>
+              <label>Operation <select id="blockOperation"><option value="01">Lås blokke</option><option value="00">Læs låsestatus</option></select></label>
+              <button class="button secondary" id="blockPermalock">BlockPermalock</button>
+              <label>QT-kommando <select id="qtAction"><option value="01">QT Read</option><option value="02">QT Write</option></select></label>
+              <button class="button secondary" id="qtCommand">Send QT</button>
+              <label class="check-label"><input id="qtSr" type="checkbox"> QT_SR</label>
+              <label class="check-label"><input id="qtMem" type="checkbox"> QT_MEM</label>
+              <button class="button secondary" id="nxpProtect">NXP ReadProtect</button>
+              <button class="button secondary" id="nxpReset">NXP Reset Protect</button>
+              <label>EAS-status <select id="nxpEasState"><option value="01">Aktivér</option><option value="00">Deaktivér</option></select></label>
+              <button class="button secondary" id="nxpEas">NXP Change EAS</button>
+              <button class="button secondary" id="nxpAlarm">NXP EAS Alarm</button>
+              <label>Config-word (hex) <input id="configWord" value="0000" maxlength="4"></label>
+              <button class="button secondary" id="nxpConfig">NXP Config-word</button>
+            </div>
+          </section>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-test" hidden>
+      <div class="test-grid">
+        <section class="card chart-card">
+          <div class="card-heading"><div><p class="eyebrow">RF SPECTRUM</p><h2>Blokeringssignal pr. kanal</h2></div></div>
+          <canvas id="jammerChart" aria-label="Graf over blokeringssignal"></canvas>
+          <div class="chart-footer"><span id="jammerRange">Ingen målinger</span><button class="button primary" id="scanJammer">Scan jammer</button></div>
+        </section>
+        <section class="card modem-card">
+          <div class="card-heading"><div><p class="eyebrow">DEMODULATOR</p><h2>Modemindstillinger</h2></div></div>
+          <div class="form-grid two-col">
+            <label>Mixer gain<select id="mixerGain"><option value="0">0 dB</option><option value="1">3 dB</option><option value="2" selected>6 dB</option><option value="3">9 dB</option><option value="4">12 dB</option><option value="5">15 dB</option><option value="6">16 dB</option></select></label>
+            <label>IF amp gain<select id="ifGain"><option value="0">12 dB</option><option value="1">18 dB</option><option value="2">21 dB</option><option value="3">24 dB</option><option value="4">27 dB</option><option value="5">30 dB</option><option value="6" selected>36 dB</option><option value="7">40 dB</option></select></label>
+            <label class="full-width">Threshold (hex)<input id="threshold" value="00A0" maxlength="4" spellcheck="false"></label>
+            <button class="button primary" id="setModem">Sæt modem</button>
+            <button class="button secondary" id="getModem">Hent modem</button>
+          </div>
+          <div class="separator"></div>
+          <div class="card-heading compact"><div><p class="eyebrow">RSSI</p><h3>Kalibreringsparametre</h3></div></div>
+          <div class="form-grid two-col">
+            <label>Antenneforstærkning (dBi)<input id="antennaGain" type="number" value="3" min="-20" max="30"></label>
+            <label>Kobling (dB)<input id="couplerGain" type="number" value="-20" min="-100" max="30"></label>
+          </div>
+          <p class="hint">Kalibreringsfelterne ændrer ikke læserens RF-konfiguration; grafen viser de rå kanalværdier fra modulet.</p>
+        </section>
+        <section class="card chart-card rssi-card">
+          <div class="card-heading"><div><p class="eyebrow">RF SPECTRUM</p><h2>Kanal-RSSI</h2></div></div>
+          <canvas id="rssiChart" aria-label="Graf over kanal-RSSI"></canvas>
+          <div class="chart-footer"><span id="rssiRange">Ingen målinger</span><button class="button primary" id="scanRssi">Scan RSSI</button></div>
+        </section>
+      </div>
+    </section>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <dialog id="tokenDialog">
+    <form method="dialog" id="tokenForm">
+      <p class="eyebrow">ADGANGSKONTROL</p>
+      <h2>App-token</h2>
+      <p>Denne NanoPi-app kræver et token. Tokenet gemmes kun i denne browsersession.</p>
+      <label>Token <input id="tokenInput" type="password" autocomplete="current-password" required></label>
+      <div class="dialog-actions"><button class="button secondary" value="cancel">Annuller</button><button class="button primary" id="tokenSubmit" value="ok">Fortsæt</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
