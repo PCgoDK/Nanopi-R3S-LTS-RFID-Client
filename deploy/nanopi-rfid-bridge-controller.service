@@ -1,0 +1,18 @@
+[Unit]
+Description=NanoPi RFID restricted bridge controller
+After=NetworkManager.service
+
+[Service]
+Type=simple
+User=root
+Group=rfid-client
+RuntimeDirectory=nanopi-rfid-bridge
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/nanopi-rfid-client/bridge/bridge_controller.py serve
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

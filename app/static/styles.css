@@ -20,6 +20,7 @@ button { cursor: pointer; }
   padding: 3px 8px;
 }
 .topbar h1 { font-size: 12px; font-weight: normal; margin: 0; }
+.auth-warning { color: #8d2222; font-weight: bold; }
 .eyebrow { display: none; }
 .connection-badge { align-items: center; display: flex; gap: 5px; }
 .status-dot { background: #999; border-radius: 50%; height: 7px; width: 7px; }
@@ -225,6 +226,7 @@ canvas { background: #fff; border: 1px solid #777; display: block; height: 230px
   height: 210px;
   overflow: auto;
   padding: 6px;
+  width: 100%;
 }
 .sniffer-table { min-width: 0; }
 .sniffer-table td, .sniffer-table th { text-align: left; }

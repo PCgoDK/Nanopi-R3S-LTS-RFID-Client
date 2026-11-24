@@ -1,0 +1,99 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Memory UI protocol tests</title>
+<pre id="result">RUNNING</pre>
+<script>
+  const resultElement = document.getElementById("result");
+  const elements = new Map();
+  document.getElementById = (id) => {
+    if (!elements.has(id)) elements.set(id, {
+      value: "", checked: false, textContent: "",
+      classList: { add() {}, remove() {}, toggle() {} },
+      addEventListener(type, handler) { this[type] = handler; },
+    });
+    return elements.get(id);
+  };
+  document.querySelectorAll = () => [];
+  window.fetch = () => Promise.reject(new Error("Network disabled in tests"));
+</script>
+<script src="../app/static/app.js"></script>
+<script>
+  function equal(actual, expected) {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(`${JSON.stringify(actual)} != ${JSON.stringify(expected)}`);
+    }
+  }
+  function throws(fn) {
+    try { fn(); } catch { return; }
+    throw new Error("Expected an error");
+  }
+  function response(command, payload) {
+    const bytes = [1, command, payload.length >> 8, payload.length & 255, ...payload];
+    return [0xBB, ...bytes, bytes.reduce((sum, byte) => sum + byte, 0) & 255, 0x7E]
+      .map((byte) => byte.toString(16).padStart(2, "0")).join(" ");
+  }
+  async function runTests() {
+    $("accessPassword").value = "0000FFFF";
+    $("lockAccess").value = "2";
+    equal(lockPayload(), [0, 0, 255, 255, 0x02, 0x00, 0x80]);
+    $("lockAccess").value = "1";
+    equal(lockPayload(), [0, 0, 255, 255, 0x03, 0x00, 0x40]);
+    $("lockUser").value = "3";
+    equal(lockPayload(), [0, 0, 255, 255, 0x03, 0x0C, 0x43]);
+    $("lockAccess").value = "";
+    $("lockUser").value = "";
+    equal(lockPayload(), [0, 0, 255, 255, 0, 0, 0]);
+
+    $("qtAction").value = "00";
+    $("qtPersistence").value = "00";
+    equal(qtPayload(), [0, 0, 255, 255, 0, 0, 0, 0]);
+    $("qtAction").value = "01";
+    $("qtPersistence").value = "01";
+    $("qtMem").checked = true;
+    equal(qtPayload(), [0, 0, 255, 255, 1, 1, 0x40, 0]);
+    $("qtSr").checked = true;
+    equal(qtPayload(), [0, 0, 255, 255, 1, 1, 0xC0, 0]);
+    $("qtAction").value = "02";
+    throws(qtPayload);
+
+    $("blockPointer").value = "0";
+    $("blockRange").value = "1";
+    $("blockMask").value = "0700";
+    $("blockOperation").value = "01";
+    equal(blockPermalockPayload(), [0, 0, 255, 255, 1, 3, 0, 0, 1, 7, 0]);
+    $("blockRange").value = "2";
+    throws(blockPermalockPayload);
+    $("blockOperation").value = "00";
+    equal(blockPermalockPayload(), [0, 0, 255, 255, 0, 3, 0, 0, 2]);
+
+    const select = [1, 0, 0, 0, 32, 16, 0x80, 0xAB, 0xCD];
+    selectFromResponse([response(0x0B, select)]);
+    equal(selectPayload(), select);
+    $("selectLength").value = "7";
+    throws(selectPayload);
+    throws(() => selectFromResponse([response(0x0B, select.slice(0, -1))]));
+
+    const epc = "AABB";
+    const tag = [4, 0x30, 0, 0xAA, 0xBB];
+    equal([...tagReply([response(0xE5, [...tag, 0x40, 0])], 0xE5, epc, 2)], [0x40, 0]);
+    throws(() => tagReply([response(0xFF, [0x2E])], 0xE5, epc, 2));
+    throws(() => tagReply([response(0xE5, [...tag, 0, 0])], 0xE5, "CCDD", 2));
+
+    selectedEpc = epc;
+    ensureTagSelected = async () => {};
+    let sent;
+    sendFrame = async (command, payload) => {
+      sent = [command, payload];
+      return [response(0xE5, [...tag, 0, 0])];
+    };
+    window.confirm = () => { throw new Error("QT Read must not request write confirmation"); };
+    $("qtAction").value = "00";
+    $("qtCommand").click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    equal(sent[0], 0xE5);
+    equal(sent[1][4], 0);
+    equal($("toast").textContent, "QT control word: 0000");
+    resultElement.textContent = "PASS";
+  }
+  runTests().catch((error) => { resultElement.textContent = `FAIL: ${error.stack || error}`; });
+</script>

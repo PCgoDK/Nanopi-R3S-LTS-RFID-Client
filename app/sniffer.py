@@ -1,4 +1,7 @@
+from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
+import sqlite3
 
 
 @dataclass(frozen=True)
@@ -46,3 +49,75 @@ def extract_values(data: bytes, rules: list[ExtractionRule]) -> list[dict]:
             status = "matched"
         results.append({"name": rule.name, "status": status, "value": value if status == "matched" else None})
     return results
+
+
+class RuleStore:
+    def __init__(self, path: Path):
+        self.path = path
+
+    @contextmanager
+    def _connection(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self.path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS rules ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, marker TEXT NOT NULL, "
+                    "length INTEGER, terminator TEXT, version INTEGER NOT NULL DEFAULT 1)"
+                )
+                yield connection
+        finally:
+            connection.close()
+
+    def list(self) -> list[dict]:
+        with self._connection() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT id, name, marker, length, terminator, version FROM rules ORDER BY id"
+            )]
+
+    def list_existing(self) -> "list[dict]":
+        try:
+            self.path.stat()
+        except FileNotFoundError:
+            return []
+        connection = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        try:
+            return [dict(row) for row in connection.execute(
+                "SELECT id, name, marker, length, terminator, version FROM rules ORDER BY id"
+            )]
+        finally:
+            connection.close()
+
+    def save(self, rule: ExtractionRule, rule_id: int | None = None, version: int | None = None) -> int | None:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if rule_id is None:
+                if connection.execute("SELECT COUNT(*) FROM rules").fetchone()[0] >= 100:
+                    raise ValueError("Maximum 100 regler.")
+                cursor = connection.execute(
+                    "INSERT INTO rules (name, marker, length, terminator) VALUES (?, ?, ?, ?)",
+                    (rule.name, rule.marker, rule.length, rule.terminator),
+                )
+                return cursor.lastrowid
+            cursor = connection.execute(
+                "UPDATE rules SET name=?, marker=?, length=?, terminator=?, version=version+1 WHERE id=? AND version=?",
+                (rule.name, rule.marker, rule.length, rule.terminator, rule_id, version),
+            )
+            if not cursor.rowcount and connection.execute("SELECT 1 FROM rules WHERE id=?", (rule_id,)).fetchone():
+                raise RuleConflictError("Reglen er ændret af en anden bruger. Opdatér listen.")
+            return rule_id if cursor.rowcount else None
+
+    def delete(self, rule_id: int, version: int) -> bool:
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute("DELETE FROM rules WHERE id=? AND version=?", (rule_id, version))
+            if not cursor.rowcount and connection.execute("SELECT 1 FROM rules WHERE id=?", (rule_id,)).fetchone():
+                raise RuleConflictError("Reglen er ændret af en anden bruger. Opdatér listen.")
+            return cursor.rowcount > 0
+
+
+class RuleConflictError(Exception):
+    pass

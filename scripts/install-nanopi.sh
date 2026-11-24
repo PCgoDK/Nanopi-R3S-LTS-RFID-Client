@@ -63,6 +63,7 @@ fi
 
 install -d -o root -g root -m 0755 "$INSTALL_DIR" "$APP_DIR"
 install -d -o root -g "$APP_GROUP" -m 0750 "$STATE_DIR"
+install -d -o "$APP_USER" -g "$APP_GROUP" -m 0700 "$STATE_DIR/sniffer"
 install -d -o root -g root -m 0755 "$CONFIG_DIR"
 
 cp -a "${SOURCE_DIR}/app/." "${APP_DIR}/"

@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from app.main import ReaderService
 from app.protocol import build_frame
 
@@ -75,3 +77,38 @@ def test_read_frame_keeps_incomplete_frame_for_next_read():
     assert service._read_frame(fake, 0.01) is None
     fake.response.extend(response[4:])
     assert service._read_frame(fake, 0.1) == response
+
+
+def test_sniffer_inventory_records_tag_notifications_and_blocks_manual_stop():
+    tag = build_frame(0x22, bytes.fromhex("D0 08 00 AB CD 12 34"), frame_type=0x02)
+    invalid_pc = build_frame(0x22, bytes.fromhex("D0 00 00 AB CD 12 34"), frame_type=0x02)
+    command_reply = build_frame(0x22, bytes.fromhex("D0 08 00 AB CD 12 34"), frame_type=0x01)
+    service = ReaderService()
+    service._serial = FakeSerial(command_reply + invalid_pc + tag)
+    observations = []
+    service.observation_callback = lambda epc, timestamp: observations.append(epc)
+    service.start_inventory(65535, owner="sniffer")
+    deadline = time.monotonic() + 1
+    while not observations and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert observations == ["ABCD"]
+    with pytest.raises(RuntimeError):
+        service.stop_inventory(owner="manual")
+    service.stop_inventory(owner="sniffer")
+    assert not service.inventory_running
+
+
+@pytest.mark.parametrize("code, expected_error", [(0x15, False), (0x16, True)])
+def test_sniffer_inventory_surfaces_reader_errors_without_treating_no_tag_as_failure(code, expected_error):
+    response = build_frame(0xFF, bytes([code]), frame_type=0x01)
+    service = ReaderService()
+    service._serial = FakeSerial(response)
+    service.start_inventory(65535, owner="sniffer")
+    try:
+        deadline = time.monotonic() + 1
+        while not service._inventory_error and not service._inventory_response_received and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert bool(service._inventory_error) == expected_error
+        assert service._inventory_response_received != expected_error
+    finally:
+        service.stop_inventory(owner="sniffer")

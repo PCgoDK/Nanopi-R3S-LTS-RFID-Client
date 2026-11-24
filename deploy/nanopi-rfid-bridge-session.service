@@ -1,0 +1,15 @@
+[Unit]
+Description=Temporary NanoPi RFID printer bridge
+After=NetworkManager.service nanopi-rfid-client.service nanopi-rfid-bridge-controller.service
+BindsTo=NetworkManager.service nanopi-rfid-client.service nanopi-rfid-bridge-controller.service
+
+[Service]
+Type=simple
+User=root
+ExecCondition=/usr/bin/test -f /run/nanopi-rfid-bridge/watchdog
+ExecStart=/usr/bin/python3 /opt/nanopi-rfid-client/bridge/bridge_controller.py run
+ExecStartPost=-/usr/bin/systemctl --no-block start nanopi-rfid-capture.service
+ExecStopPost=/usr/bin/python3 /opt/nanopi-rfid-client/bridge/bridge_controller.py cleanup
+KillMode=control-group
+TimeoutStopSec=100
+Restart=no

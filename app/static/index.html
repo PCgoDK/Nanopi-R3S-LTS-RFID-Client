@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>NanoPi UHF RFID Client</title>
-  <link rel="stylesheet" href="/static/styles.css">
-  <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=sniffer-rules-1">
+  <script src="/static/app.js?v=job-log-1" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -14,6 +14,8 @@
       <h1>UHF RFID Reader</h1>
     </div>
     <div class="inline-actions">
+      <span id="wanIp" aria-live="polite">WAN IP: Afventer login</span>
+      <span id="noAuthWarning" class="auth-warning" hidden>Ingen adgangskontrol</span>
       <button class="button secondary" id="forgetToken" type="button" hidden>Glem token</button>
       <div class="connection-badge" id="connectionBadge" aria-live="polite">
         <span class="status-dot"></span><span id="connectionText">Ikke forbundet</span>
@@ -184,11 +186,12 @@
             <div class="form-grid three-col">
               <label>Target <select id="selectTarget"><option value="0">Inventoried S0</option><option value="1">Inventoried S1</option><option value="2">Inventoried S2</option><option value="3">Inventoried S3</option><option value="4">SL</option></select></label>
               <label>Action <select id="selectAction"><option value="0">Action 0</option><option value="1">Action 1</option><option value="2">Action 2</option><option value="3">Action 3</option><option value="4">Action 4</option><option value="5">Action 5</option><option value="6">Action 6</option><option value="7">Action 7</option></select></label>
-              <label>Bank <select id="selectBank"><option value="1">EPC</option><option value="2">TID</option><option value="3">User</option></select></label>
+              <label>Bank <select id="selectBank"><option value="1">EPC</option><option value="2">TID</option><option value="3">User</option><option value="0">RFU / Reserved</option></select></label>
               <label>Bit-pointer <input id="selectPointer" value="32" inputmode="numeric"></label>
               <label>Mask-længde (bit) <input id="selectLength" value="96" inputmode="numeric"></label>
               <label>Mask (hex) <input id="selectMask" value="" spellcheck="false"></label>
               <label class="check-label"><input id="selectTruncate" type="checkbox"> Truncate-tag-svar</label>
+              <label>Select-tilstand <select id="selectMode"><option value="0">Før alle tagoperationer, inkl. inventering</option><option value="1">Ingen Select</option><option value="2" selected>Før tagoperationer undtagen inventering</option></select></label>
             </div>
             <div class="inline-actions action-row"><button class="button primary" id="setSelect">Sæt Select</button><button class="button secondary" id="getSelect">Hent Select</button><button class="button secondary" id="setSelectMode">Sæt Select-tilstand</button></div>
           </div>
@@ -203,25 +206,25 @@
               <button class="button primary" id="readMemory">Læs</button>
               <button class="button danger" id="writeMemory">Skriv</button>
             </div>
-            <div class="result-box"><span>PC + EPC</span><strong id="selectedTag">—</strong><span>Status</span><strong id="memoryStatus">Klar</strong></div>
+            <div class="result-box"><span>Valgt EPC</span><strong id="selectedTag">—</strong><span>Læste data (hex)</span><strong id="memoryReadData">—</strong><span>Status</span><strong id="memoryStatus" aria-live="polite">Klar</strong></div>
           </section>
 
           <section class="card protection-card">
             <div class="card-heading compact"><div><p class="eyebrow">LOCK / KILL</p><h2>Tagbeskyttelse</h2></div></div>
             <label>Kill password (hex)<input id="killPassword" value="00000000" maxlength="8" spellcheck="false"></label>
             <div class="lock-grid">
-              <label>Kill <select id="lockKill"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
-              <label>Access <select id="lockAccess"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
-              <label>EPC <select id="lockEpc"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
-              <label>TID <select id="lockTid"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
-              <label>User <select id="lockUser"><option value="0">Uændret</option><option value="1">Lås op</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>Kill <select id="lockKill"><option value="">Uændret</option><option value="0">Lås op</option><option value="1">Permanent åben</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>Access <select id="lockAccess"><option value="">Uændret</option><option value="0">Lås op</option><option value="1">Permanent åben</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>EPC <select id="lockEpc"><option value="">Uændret</option><option value="0">Lås op</option><option value="1">Permanent åben</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>TID <select id="lockTid"><option value="">Uændret</option><option value="0">Lås op</option><option value="1">Permanent åben</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
+              <label>User <select id="lockUser"><option value="">Uændret</option><option value="0">Lås op</option><option value="1">Permanent åben</option><option value="2">Lås</option><option value="3">Permanent lås</option></select></label>
             </div>
             <button class="button secondary full-width" id="lockTag">Lock memory</button>
             <div class="form-grid two-col top-gap">
               <label>Bekræft permanent kill <input id="killConfirm" placeholder="Skriv KILL" autocomplete="off"></label>
               <button class="button danger align-end" id="killTag">Kill tag</button>
             </div>
-            <p class="hint warning">Lock kan være permanent. Kill deaktiverer tagget permanent. Kontrollér mål-tag og passwords før brug.</p>
+            <p class="hint warning">Brug ikke skrivning eller tagændringer endnu: samtidige klienter kan ændre mål-tagget. Lock og Kill kan være permanente.</p>
           </section>
 
         </aside>
@@ -232,9 +235,10 @@
               <label>Block-pointer <input id="blockPointer" value="0"></label>
               <label>Block-range <input id="blockRange" value="1"></label>
               <label class="full-width">Block-mask (hex) <input id="blockMask" value="0700"></label>
-              <label>Operation <select id="blockOperation"><option value="01">Lås blokke</option><option value="00">Læs låsestatus</option></select></label>
+              <label>Operation <select id="blockOperation"><option value="00">Læs låsestatus</option><option value="01">Lås blokke permanent</option></select></label>
               <button class="button secondary" id="blockPermalock">BlockPermalock</button>
-              <label>QT-kommando <select id="qtAction"><option value="01">QT Read</option><option value="02">QT Write</option></select></label>
+              <label>QT-kommando <select id="qtAction"><option value="00">QT Read</option><option value="01">QT Write</option></select></label>
+              <label>QT-lagring ved skrivning <select id="qtPersistence"><option value="00">Flygtig</option><option value="01">Ikke-flygtig</option></select></label>
               <button class="button secondary" id="qtCommand">Send QT</button>
               <label class="check-label"><input id="qtSr" type="checkbox"> QT_SR</label>
               <label class="check-label"><input id="qtMem" type="checkbox"> QT_MEM</label>
@@ -243,9 +247,10 @@
               <label>EAS-status <select id="nxpEasState"><option value="01">Aktivér</option><option value="00">Deaktivér</option></select></label>
               <button class="button secondary" id="nxpEas">NXP Change EAS</button>
               <button class="button secondary" id="nxpAlarm">NXP EAS Alarm</button>
-              <label>Config-word (hex) <input id="configWord" value="0000" maxlength="4"></label>
+              <label>Config-bitmaske (hex; 1 inverterer bit) <input id="configWord" value="0000" maxlength="4"></label>
               <button class="button secondary" id="nxpConfig">NXP Config-word</button>
             </div>
+            <p class="hint warning">NXP-kommandoer kræver understøttede G2X-tags; QT kræver Monza 4 QT. Kommandoerne er ikke hardwaretestet. BlockPermalock- og EAS-eksemplerne i manualen indeholder modstridende oplysninger.</p>
           </section>
       </div>
     </section>
@@ -284,8 +289,8 @@
 
     <section class="tab-panel" id="panel-sniffer" hidden>
       <div class="sniffer-notice" role="note">
-        <strong>Designvisning — eksempeldata</strong>
-        <span>Ingen bridge, opsamling eller RFID-læsning er aktiv fra dette faneblad endnu.</span>
+        <strong>Printdata og automatisk udtræk</strong>
+        <span>RFID-læsninger og job gemmes i 1 døgn. Koblinger foretages manuelt.</span>
       </div>
 
       <section class="card sniffer-settings">
@@ -293,43 +298,44 @@
         <div class="sniffer-settings-grid">
           <label>Host-port<input value="WAN" disabled></label>
           <label>Printer-port<input value="LAN" disabled></label>
-          <label>Printer TCP/IP<input value="192.168.1.150:9100" disabled></label>
+          <label>Printer TCP/IP<input id="printerAddress" placeholder="192.168.1.150:9100" disabled></label>
           <label>Jobpause (sek.)<input type="number" value="2" disabled></label>
-          <button class="button primary" disabled>Start bridge</button>
-          <button class="button secondary" disabled>Stop bridge</button>
+          <button class="button secondary" id="savePrinterAddress" disabled>Gem printeradresse</button>
+          <button class="button primary" id="startBridge" disabled>Start bridge</button>
+          <button class="button secondary" id="stopBridge" disabled>Stop bridge</button>
         </div>
-        <p class="hint">Opsætning og status er kun vist som design — netværksindstillingerne ændres ikke.</p>
-        <p class="hint">Planlagt: Start/Stop huskes efter genstart. <strong>http://192.168.1.150:8080/</strong> åbner webappen fra hostsiden; øvrig trafik videresendes til printeren.</p>
+        <p class="hint" id="bridgeStatus">Bridge-status afventer kontrol.</p>
+        <p class="hint">Bridgen er slået fra efter genstart. Når den startes, skal du inden 2 minutter åbne <a id="bridgeConfirmLink" href="http://192.168.1.150:8080/">printeradressen på port 8080</a> fra hostsiden; ellers tilbagerulles ændringen automatisk. Øvrig trafik videresendes til printeren.</p>
         <p class="hint warning">Printerens egen port 8080 kan ikke nås fra hostsiden, mens omdirigeringen er aktiv.</p>
       </section>
 
       <section class="card sniffer-rule">
-        <div class="card-heading"><h2>Udvælgelsesregel</h2></div>
+        <div class="card-heading"><h2>Udtræksregler</h2></div>
         <div class="sniffer-rule-grid">
-          <label>Navn<input value="Udvalg 1" disabled></label>
-          <label>Søg efter<input value="^FD" disabled></label>
-          <label>Afslut med<select disabled><option>Antal tegn</option><option selected>Afslutningstekst</option></select></label>
-          <label>Antal tegn frem<input type="number" placeholder="Kun ved antal tegn" disabled></label>
-          <label>Afslutningstekst<input value="^FS" disabled></label>
-          <button class="button primary" disabled>Anvend regel</button>
-          <label>Eksempel på udtræk<input value="136556" disabled></label>
+          <label>Navn<input id="snifferRuleName" maxlength="80"></label>
+          <label>Søg efter<input id="snifferRuleMarker" value="^FD" maxlength="256"></label>
+          <label>Afslut med<select id="snifferRuleEnd"><option value="length">Antal tegn</option><option value="terminator" selected>Afslutningstekst</option></select></label>
+          <label>Antal tegn frem<input id="snifferRuleLength" type="number" min="1" max="100000" placeholder="Kun ved antal tegn" disabled></label>
+          <label>Afslutningstekst<input id="snifferRuleTerminator" value="^FS" maxlength="256"></label>
+          <button class="button primary" id="saveSnifferRule">Gem regel</button>
         </div>
         <p class="hint">Vælg enten antal tegn eller afslutningstekst. Første forekomst anvendes; afslutningsteksten medtages ikke.</p>
         <div class="sniffer-rule-list">
           <div class="sniffer-rule-list-heading">
-            <strong>Regler · eksempel</strong>
+            <strong>Gemte regler</strong>
             <div class="inline-actions">
-              <button class="button secondary" disabled>Tilføj regel</button>
-              <button class="button secondary" disabled>Fjern valgt regel</button>
+              <button class="button secondary" id="newSnifferRule">Ny regel</button>
+              <button class="button secondary" id="deleteSnifferRule" disabled>Fjern valgt regel</button>
+              <button class="button secondary" id="refreshSnifferRules">Opdatér liste</button>
             </div>
           </div>
           <div class="table-wrap">
             <table class="sniffer-table">
               <thead><tr><th>Navn</th><th>Søg efter</th><th>Afslut med</th><th>Grænse</th></tr></thead>
-              <tbody><tr><td>Udvalg 1</td><td>^FD</td><td>Afslutningstekst</td><td>^FS</td></tr></tbody>
+              <tbody id="snifferRuleRows"><tr><td class="empty" colspan="4">Ingen regler hentet</td></tr></tbody>
             </table>
           </div>
-          <p class="hint">Hvert printjob kan behandles med flere navngivne regler.</p>
+          <p class="hint">Vælg en regel i listen for at redigere den. Reglerne gemmes på NanoPi'en og deles mellem brugere.</p>
         </div>
       </section>
 
@@ -348,9 +354,10 @@
 
       <div class="sniffer-columns">
         <section class="card sniffer-column">
-          <div class="card-heading"><h2>1. Indgående data</h2></div>
-          <p class="hint">Eksempel på printdata · TCP port 9100</p>
-          <pre class="sniffer-data" aria-label="Eksempel på indgående printdata">^XA
+          <div class="card-heading"><h2>1. Testdata</h2></div>
+          <p class="hint">Seneste printdata erstatter automatisk indholdet. Du kan også indtaste eksempeltekst manuelt.</p>
+          <p class="hint" id="captureStatus">Printeropsamling afventer bridge.</p>
+          <textarea id="snifferTestData" class="sniffer-data" maxlength="100000" aria-label="Testdata til udtræk">^XA
 ^CF0,80,80
 
 ^FX Barcode
@@ -359,41 +366,52 @@
 ^FO50,400^A0N,140,140^FD136556^FS
 
 ^PQ1,0,1,Y
-^XZ</pre>
-          <p class="hint">Flere TCP-pakker samles til et job. Binær grafik kan også forekomme.</p>
+^XZ</textarea>
+          <button class="button primary" id="previewSnifferRules">Prøv gemte regler</button>
+          <p class="hint">Jobafgrænsning bruger 2 sekunders pause. Hurtige job kan blive samlet, og binære data vises ikke præcist.</p>
         </section>
 
         <section class="card sniffer-column">
-          <div class="card-heading"><h2>2. Udvalgte værdier og RFID</h2></div>
+          <div class="card-heading"><h2>2. Udtræk og RFID</h2></div>
+          <p class="hint" id="snifferResultSource">Intet udtræk udført.</p>
           <div class="table-wrap">
             <table class="sniffer-table">
-              <thead><tr><th>Felt</th><th>Værdi</th></tr></thead>
-              <tbody><tr><td>Udvalg 1</td><td>136556</td></tr></tbody>
+              <thead><tr><th>Felt</th><th>Status</th><th>Værdi</th></tr></thead>
+              <tbody id="snifferPreviewRows"><tr><td class="empty" colspan="3">Ingen prøve udført</td></tr></tbody>
             </table>
           </div>
           <div class="sniffer-rfid">
-            <strong>RFID · eksempel</strong>
-            <p class="hint">EPC læst efter printjobbet:</p>
-            <code>3000123456789ABCDEF00001</code>
-            <p class="hint">Intet tag vises som NoTag. Usikre koblinger skal afklares manuelt.</p>
+            <strong>RFID-læsning</strong>
+            <p class="hint" id="jobRfidStatus">RFID-status afventer kontrol.</p>
+            <p class="hint">EPC-læsninger kan ikke kobles sikkert automatisk ved hurtige etiketter. Kontrollér tidspunkt og vælg koblingen manuelt.</p>
           </div>
         </section>
 
         <section class="card sniffer-column">
           <div class="card-heading"><h2>3. Udtræk til log</h2></div>
-          <p class="hint">Eksempel på en gemt post</p>
-          <dl class="sniffer-record">
-            <dt>Dato/tid</dt><dd>2026-01-01 10:42:09</dd>
-            <dt>Udvalg 1</dt><dd>136556</dd>
-            <dt>EPC</dt><dd>3000123456789ABCDEF00001</dd>
-            <dt>Status</dt><dd>Eksempel</dd>
-          </dl>
+          <p class="hint">Vælg et job og en observeret EPC. Listen viser de seneste 100 job og 200 RFID-observationer.</p>
+          <label>Job<select id="jobLogSelect"><option value="">Vælg job</option></select></label>
+          <label>Observeret EPC<select id="jobObservationSelect"><option value="">Vælg RFID-observation</option></select></label>
           <div class="sniffer-actions">
-            <button class="button secondary" disabled>Vis log og kø</button>
-            <button class="button secondary" disabled>Gem som CSV</button>
+            <button class="button secondary" id="linkJobEpc">Knyt EPC</button>
+            <button class="button secondary" id="markJobNoTag">Markér NoTag</button>
+            <button class="button secondary" id="clearJobNoTag">Fortryd NoTag</button>
+          </div>
+          <label>Tilknyttet EPC<select id="jobLinkedSelect"><option value="">Vælg kobling</option></select></label>
+          <div class="sniffer-actions">
+            <button class="button secondary" id="unlinkJobEpc">Fjern kobling</button>
+            <button class="button secondary" id="refreshJobLog">Opdatér log</button>
+            <button class="button secondary" id="exportJobLog">Gem som CSV</button>
             <button class="button secondary" disabled>Send data</button>
           </div>
-          <p class="hint">Videresendelse til RFID-serveren tilføjes senere.</p>
+          <p class="hint" id="jobLogStatus">Loggen afventer kontrol.</p>
+          <div class="table-wrap">
+            <table class="sniffer-table">
+              <thead><tr><th>Tid</th><th>Udtræk</th><th>EPC</th><th>Status</th></tr></thead>
+              <tbody id="jobLogRows"><tr><td class="empty" colspan="4">Ingen job hentet</td></tr></tbody>
+            </table>
+          </div>
+          <p class="hint">EPC-observationer er ikke automatisk bevis for, hvilket job de tilhører. Videresendelse til RFID-serveren tilføjes senere.</p>
         </section>
       </div>
     </section>

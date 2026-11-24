@@ -5,6 +5,7 @@ const tokenDialog = $("tokenDialog");
 const tokenForm = $("tokenForm");
 let authRequired = false;
 let selectedEpc = "";
+let selectionGeneration = 0;
 let refreshTimer = null;
 let continueTimer = null;
 let cwTimer = null;
@@ -14,6 +15,20 @@ let connectionGeneration = 0;
 let inventoryRunning = false;
 let versionsRequested = false;
 let versionsPending = false;
+let snifferRules = [];
+let selectedSnifferRule = null;
+let selectedSnifferVersion = null;
+let snifferRulesLoaded = false;
+let bridgeBusy = false;
+let bridgeWanIp = null;
+let bridgeActive = false;
+let savedPrinterAddress = null;
+let captureBusy = false;
+let latestCaptureId = null;
+let latestExtractionKey = null;
+let snifferPreviewGeneration = 0;
+let jobLogBusy = false;
+let jobLogJobs = [];
 const chartValues = { jammerChart: null, rssiChart: null };
 const regionChannels = {
   "01": { startKhz: 920125, stepKhz: 250, count: 20 },
@@ -36,10 +51,22 @@ function showTokenDialog() {
   if (!tokenDialog.open) tokenDialog.showModal();
 }
 
+async function refreshWanIp() {
+  const label = $("wanIp");
+  try {
+    const data = await api("/api/network");
+    label.textContent = `WAN IP: ${data.wan_ip || bridgeWanIp || "Ingen dynamisk IP"}`;
+    label.title = "Dynamisk IPv4-adresse på WAN eller bridge";
+  } catch (error) {
+    label.textContent = "WAN IP: Kan ikke hentes";
+    label.title = error.message || String(error);
+  }
+}
+
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Content-Type", "application/json");
-  const token = localStorage.getItem("rfid-app-token");
+  const token = authRequired ? localStorage.getItem("rfid-app-token") : null;
   if (token) headers.set("X-API-Token", token);
   const response = await fetch(path, { ...options, headers });
   let data;
@@ -49,6 +76,9 @@ async function api(path, options = {}) {
     data = {};
   }
   if (response.status === 401) {
+    authRequired = true;
+    $("forgetToken").hidden = false;
+    $("noAuthWarning").hidden = true;
     if (token && localStorage.getItem("rfid-app-token") === token) {
       localStorage.removeItem("rfid-app-token");
     }
@@ -57,6 +87,109 @@ async function api(path, options = {}) {
   }
   if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
   return data;
+}
+
+async function refreshBridge() {
+  if (authRequired && !localStorage.getItem("rfid-app-token")) {
+    $("bridgeStatus").textContent = "Bridge-status afventer login.";
+    return;
+  }
+  try {
+    const state = await api("/api/bridge");
+    bridgeActive = state.active;
+    bridgeWanIp = state.wan_ip;
+    const configuredAddress = `${state.printer.ip}:${state.printer.port}`;
+    if (savedPrinterAddress === null || state.active) $("printerAddress").value = configuredAddress;
+    savedPrinterAddress = configuredAddress;
+    const locked = bridgeBusy || state.active || state.transitioning || state.pending_confirmation || state.needs_recovery;
+    $("printerAddress").disabled = locked;
+    $("savePrinterAddress").disabled = locked || $("printerAddress").value.trim() === savedPrinterAddress;
+    $("startBridge").disabled = locked || $("printerAddress").value.trim() !== savedPrinterAddress;
+    $("stopBridge").disabled = bridgeBusy || !state.active;
+    $("bridgeConfirmLink").href = `http://${state.printer.ip}:8080/`;
+    $("bridgeConfirmLink").textContent = `http://${state.printer.ip}:8080/`;
+    $("bridgeStatus").textContent = state.needs_recovery
+      ? "Bridge kræver gendannelse. Kontrollér NanoPi'ens tjenestelog eller genstart."
+      : state.transitioning && !state.active
+        ? "Bridgen stoppes, og WAN gendannes."
+      : state.active
+        ? (state.pending_confirmation ? "Bridge starter. Åbn printeradressen for at bekræfte adgangen." : "Bridge er aktiv.")
+        : (state.pending_confirmation ? "Bridge starter eller gendannes." : "Bridge er slået fra.");
+  } catch (error) {
+    bridgeActive = false;
+    bridgeWanIp = null;
+    $("startBridge").disabled = true;
+    $("stopBridge").disabled = true;
+    $("printerAddress").disabled = true;
+    $("savePrinterAddress").disabled = true;
+    $("bridgeStatus").textContent = `Bridge-styring ikke tilgængelig: ${error.message || String(error)}`;
+  }
+}
+
+async function refreshCapture() {
+  if (captureBusy) return;
+  if (!bridgeActive) {
+    $("captureStatus").textContent = "Printeropsamling afventer aktiv bridge.";
+    return;
+  }
+  captureBusy = true;
+  try {
+    const data = await api("/api/sniffer/capture");
+    if (data.error) throw new Error(data.error);
+    const latest = data.latest;
+    if (latest && latest.id !== latestCaptureId) {
+      latestCaptureId = latest.id;
+      $("snifferTestData").value = latest.text;
+      clearSnifferPreview("Automatisk udtræk afventer.");
+      $("snifferResultSource").textContent = "Automatisk udtræk fra seneste printdata.";
+    }
+    if (latest && latest.extraction) {
+      const extraction = latest.extraction;
+      const key = `${latest.id}:${extraction.state}:${Boolean(latest.incomplete)}`;
+      if (key !== latestExtractionKey) {
+        latestExtractionKey = key;
+        if (extraction.state === "done") {
+          snifferPreviewGeneration++;
+          renderSnifferResults(extraction.results);
+          $("snifferResultSource").textContent = "Automatisk udtræk fra seneste printdata.";
+        } else if (extraction.state === "error") {
+          clearSnifferPreview(extraction.error || "Automatisk udtræk fejlede.");
+          $("snifferResultSource").textContent = "Automatisk udtræk fejlede.";
+        }
+      }
+    }
+    const warnings = [];
+    if (data.packet_loss || (latest && latest.incomplete)) warnings.push("Data kan være ufuldstændige.");
+    if (latest && latest.invalid_utf8) warnings.push("Binære eller ugyldige UTF-8-data vises ikke præcist.");
+    if (latest && latest.extraction_errors) warnings.push("Et eller flere automatiske udtræk fejlede i denne session.");
+    $("captureStatus").textContent = (latest ? "Seneste printdata er modtaget." : "Opsamling er aktiv; afventer printdata.")
+      + (warnings.length ? ` ${warnings.join(" ")}` : "");
+  } catch (error) {
+    $("captureStatus").textContent = `Printeropsamling ikke tilgængelig: ${error.message || String(error)}`;
+  } finally {
+    captureBusy = false;
+  }
+}
+
+async function changeBridge(action) {
+  bridgeBusy = true;
+  $("startBridge").disabled = true;
+  $("stopBridge").disabled = true;
+  try {
+    await api(`/api/bridge/${action}`, { method: "POST" });
+    if (action === "start") showToast("Åbn printeradressen inden 2 minutter for at beholde bridgen.");
+    if (action === "stop") showToast("Bridgen stoppes. NanoPi'ens DHCP-adresse kan ændre sig.");
+  } finally {
+    bridgeBusy = false;
+    await refreshBridge();
+  }
+}
+
+async function confirmBridgeIfNeeded() {
+  const state = await api("/api/bridge");
+  if (location.hostname === state.printer.ip && state.active && state.pending_confirmation) {
+    await api("/api/bridge/confirm", { method: "POST" });
+  }
 }
 
 function bytesFromHex(value, name = "Hex-værdi") {
@@ -200,6 +333,11 @@ function renderTagTable(rows, bodyId, showRssi) {
       row.append(cell);
     }
     row.addEventListener("click", () => {
+      if (selectedEpc !== tag.epc) {
+        selectionGeneration++;
+        if ($("memoryReadData")) $("memoryReadData").textContent = "—";
+        $("memoryStatus").textContent = "Valgt tag ændret.";
+      }
       selectedEpc = tag.epc;
       $("selectedTag").textContent = tag.epc;
       $("selectMask").value = tag.epc;
@@ -230,6 +368,13 @@ async function updateState(state) {
   $("connectButton").textContent = state.connected ? "Afbryd" : "Forbind";
   $("rxCounter").textContent = String(state.rx_bytes || 0);
   $("txCounter").textContent = String(state.tx_bytes || 0);
+  if (selectedEpc && (!state.connected || !(state.tags || []).some((tag) => tag.epc === selectedEpc))) {
+    selectedEpc = "";
+    selectionGeneration++;
+    $("selectedTag").textContent = "—";
+    if ($("memoryReadData")) $("memoryReadData").textContent = "—";
+    $("memoryStatus").textContent = "Valgt tag er ikke længere i tabellen.";
+  }
   $("stopRead").disabled = !state.inventory_running;
   $("readMulti").disabled = !state.connected || state.inventory_running;
   $("readSingle").disabled = !state.connected || state.inventory_running;
@@ -328,19 +473,35 @@ function queryPayload() {
   const session = Number($("querySession").value);
   const target = Number($("queryTarget").value);
   const q = numberValue("queryQ", "Q", 0, 15);
+  if (dr !== 0 || m !== 0 || trext !== 1) throw new Error("Læseren understøtter kun DR=8, M=1 og pilottonen aktiveret.");
   return [((dr & 1) << 7) | ((m & 3) << 5) | ((trext & 1) << 4) | ((sel & 3) << 2) | (session & 3), ((q & 15) << 3) | ((target & 1) << 2)];
 }
 
 function selectPayload() {
-  const target = numberValue("selectTarget", "Select target", 0, 7);
+  const target = numberValue("selectTarget", "Select target", 0, 4);
   const action = numberValue("selectAction", "Select action", 0, 7);
   const bank = numberValue("selectBank", "Select bank", 0, 3);
   const pointer = numberValue("selectPointer", "Bit-pointer", 0, 0xFFFFFFFF);
   const bitLength = numberValue("selectLength", "Mask-længde", 0, 0xFF);
   const mask = [...bytesFromHex($("selectMask").value, "Select-mask")];
-  if (bitLength > mask.length * 8) throw new Error("Select-masken er kortere end den angivne mask-længde.");
+  if (mask.length !== Math.ceil(bitLength / 8)) throw new Error("Select-maskens byteantal skal svare til mask-længden i bit.");
   const parameter = ((target & 7) << 5) | ((action & 7) << 2) | (bank & 3);
   return [parameter, (pointer >>> 24) & 0xFF, (pointer >>> 16) & 0xFF, (pointer >>> 8) & 0xFF, pointer & 0xFF, bitLength, $("selectTruncate").checked ? 0x80 : 0x00, ...mask];
+}
+
+function selectFromResponse(responses) {
+  const data = firstPayload(responses, 0x0B);
+  if (!data || data.length < 7 || data.length !== 7 + Math.ceil(data[5] / 8) ||
+      (data[0] >> 5) > 4 || (data[6] !== 0 && data[6] !== 0x80)) {
+    throw new Error("Ugyldigt Select-svar fra læseren.");
+  }
+  $("selectTarget").value = String(data[0] >> 5);
+  $("selectAction").value = String((data[0] >> 2) & 7);
+  $("selectBank").value = String(data[0] & 3);
+  $("selectPointer").value = String(data[1] * 0x1000000 + (data[2] << 16) + (data[3] << 8) + data[4]);
+  $("selectLength").value = String(data[5]);
+  $("selectTruncate").checked = data[6] === 0x80;
+  $("selectMask").value = bytesToHex(data.slice(7));
 }
 
 async function ensureTagSelected() {
@@ -367,11 +528,50 @@ function selectedMemoryFields() {
 }
 
 async function readMemory() {
-  await ensureTagSelected();
-  const { bank, pointer, count, password } = selectedMemoryFields();
-  const payload = [...password, bank, (pointer >> 8) & 0xFF, pointer & 0xFF, (count >> 8) & 0xFF, count & 0xFF];
-  const responses = await sendFrame(0x39, payload, 1.5);
-  $("memoryStatus").textContent = responses.length ? "Svar modtaget — se rammer i loggen" : "Intet svar";
+  if (!$("memoryReadData")) throw new Error("Opdatér siden med Ctrl+F5 før taghukommelse læses.");
+  $("readMemory").disabled = true;
+  $("memoryReadData").textContent = "—";
+  $("memoryStatus").textContent = "Læser...";
+  try {
+    const epc = selectedEpc;
+    const generation = selectionGeneration;
+    const connection = connectionGeneration;
+    if (!epc) throw new Error("Vælg et tag i EPC-tabellen først.");
+    const { bank, pointer, count, password } = selectedMemoryFields();
+    await ensureTagSelected();
+    if (selectionGeneration !== generation || connectionGeneration !== connection) {
+      throw new Error("Tag eller forbindelse blev ændret; læsningen blev afbrudt.");
+    }
+    const payload = [...password, bank, (pointer >> 8) & 0xFF, pointer & 0xFF, (count >> 8) & 0xFF, count & 0xFF];
+    const responses = await sendFrame(0x39, payload, 1.5);
+    if (selectionGeneration !== generation || connectionGeneration !== connection) {
+      throw new Error("Tag eller forbindelse blev ændret; læseresultatet blev afvist.");
+    }
+    const frames = (responses || []).map(responsePayload).filter(Boolean);
+    const error = frames.find((frame) => frame.type === 0x01 && frame.command === 0xFF);
+    if (error) {
+      const code = error.payload.length ? `0x${error.payload[0].toString(16).padStart(2, "0").toUpperCase()}` : "ukendt";
+      throw new Error(`Læseren afviste taglæsningen (${code}); se rammer i loggen.`);
+    }
+    const replies = frames.filter((frame) => frame.type === 0x01 && frame.command === 0x39);
+    if (replies.length !== 1) throw new Error("Intet entydigt læsesvar fra læseren.");
+    const data = replies[0].payload;
+    const idLength = data[0];
+    if (idLength < 2 || data.length !== 1 + idLength + count * 2) {
+      throw new Error("Ugyldig længde i læsesvaret.");
+    }
+    if (bytesToHex(data.slice(3, 1 + idLength)) !== epc) {
+      throw new Error("Læsesvaret kom fra et andet EPC; resultatet blev afvist.");
+    }
+    $("memoryReadData").textContent = [...data.slice(1 + idLength)]
+      .map((byte) => byte.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+    $("memoryStatus").textContent = `Læst ${count} ord fra bank ${bank}, adresse ${pointer}.`;
+  } catch (error) {
+    $("memoryStatus").textContent = error.message || String(error);
+    throw error;
+  } finally {
+    $("readMemory").disabled = false;
+  }
 }
 
 async function writeMemory() {
@@ -393,13 +593,69 @@ function lockPayload() {
   const ids = ["lockKill", "lockAccess", "lockEpc", "lockTid", "lockUser"];
   let lockData = 0;
   ids.forEach((id, index) => {
-    const action = Number($(id).value);
-    if (action > 0) {
-      const field = (0x3 << 2) | ((action - 1) & 0x3);
-      lockData |= field << ((4 - index) * 4);
-    }
+    const value = $(id).value;
+    if (value === "") return;
+    if (!["0", "1", "2", "3"].includes(value)) throw new Error("Ugyldig låsehandling.");
+    const action = Number(value);
+    const shift = (4 - index) * 2;
+    const mask = action & 1 ? 3 : 2;
+    lockData |= (mask << (10 + shift)) | (action << shift);
   });
   return [...password, (lockData >> 16) & 0xFF, (lockData >> 8) & 0xFF, lockData & 0xFF];
+}
+
+function blockPermalockPayload() {
+  const password = passwordBytes($("accessPassword").value, "Access password");
+  const operation = hexByte($("blockOperation").value, "BlockPermalock-operation");
+  if (operation !== 0 && operation !== 1) throw new Error("Ugyldig BlockPermalock-operation.");
+  const pointer = numberValue("blockPointer", "Block-pointer", 0, 0xFFFF);
+  const range = numberValue("blockRange", "Block-range", 1, 255);
+  const mask = operation === 1 ? [...bytesFromHex($("blockMask").value, "Block-mask")] : [];
+  if (operation === 1 && mask.length !== range * 2) throw new Error("Block-mask skal indeholde to bytes pr. Block-range.");
+  return [...password, operation, 0x03, (pointer >> 8) & 0xFF, pointer & 0xFF, range, ...mask];
+}
+
+function qtPayload() {
+  const password = passwordBytes($("accessPassword").value, "Access password");
+  const action = hexByte($("qtAction").value, "QT-kommando");
+  const persistence = hexByte($("qtPersistence").value, "QT-lagring");
+  if ((action !== 0 && action !== 1) || (persistence !== 0 && persistence !== 1)) throw new Error("Ugyldige QT-parametre.");
+  const control = ($("qtSr").checked ? 0x80 : 0) | ($("qtMem").checked ? 0x40 : 0);
+  return [...password, action, persistence, control, 0];
+}
+
+function tagReply(responses, command, epc, resultLength) {
+  const frames = (responses || []).map(responsePayload).filter(Boolean);
+  const error = frames.find((frame) => frame.type === 0x01 && frame.command === 0xFF);
+  if (error) throw new Error(`Læseren afviste kommandoen: ${bytesToHex(error.payload) || "ukendt fejl"}.`);
+  const replies = frames.filter((frame) => frame.type === 0x01 && frame.command === command);
+  if (replies.length !== 1) throw new Error("Intet entydigt svar fra læseren.");
+  const data = replies[0].payload;
+  const idLength = data[0];
+  if (idLength < 2 || data.length !== 1 + idLength + resultLength ||
+      bytesToHex(data.slice(3, 1 + idLength)) !== epc) {
+    throw new Error("Svaret har forkert længde eller stammer fra et andet tag.");
+  }
+  return data.slice(1 + idLength);
+}
+
+async function sendSelectedTagFrame(command, payload, responseCommand, resultLength) {
+  const epc = selectedEpc;
+  const generation = selectionGeneration;
+  const connection = connectionGeneration;
+  await ensureTagSelected();
+  if (selectionGeneration !== generation || connectionGeneration !== connection) {
+    throw new Error("Tag eller forbindelse blev ændret; kommandoen blev afbrudt.");
+  }
+  const responses = await sendFrame(command, payload, 1.5);
+  if (selectionGeneration !== generation || connectionGeneration !== connection) {
+    throw new Error("Tag eller forbindelse blev ændret; kontrollér kommandosvaret i loggen.");
+  }
+  return tagReply(responses, responseCommand, epc, resultLength);
+}
+
+function requireTagSuccess(data) {
+  if (data.length !== 1 || data[0] !== 0) throw new Error("Tagkommandoen blev ikke bekræftet som vellykket.");
 }
 
 function queryFromResponse(responses) {
@@ -507,11 +763,310 @@ function bindTabs() {
         drawChart("jammerChart", chartValues.jammerChart);
         drawChart("rssiChart", chartValues.rssiChart);
       }
+      if (button.dataset.tab === "sniffer" && !snifferRulesLoaded) {
+        guarded(refreshSnifferRules);
+      }
     });
   });
 }
 
+function updateSnifferEndFields() {
+  const lengthMode = $("snifferRuleEnd").value === "length";
+  $("snifferRuleLength").disabled = !lengthMode;
+  $("snifferRuleTerminator").disabled = lengthMode;
+}
+
+function resetSnifferRule() {
+  selectedSnifferRule = null;
+  selectedSnifferVersion = null;
+  $("snifferRuleName").value = "";
+  $("snifferRuleMarker").value = "^FD";
+  $("snifferRuleEnd").value = "terminator";
+  $("snifferRuleLength").value = "";
+  $("snifferRuleTerminator").value = "^FS";
+  $("deleteSnifferRule").disabled = true;
+  updateSnifferEndFields();
+  renderSnifferRules();
+}
+
+function emptyTableRow(body, columns, message) {
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = columns;
+  cell.className = "empty";
+  cell.textContent = message;
+  row.append(cell);
+  body.append(row);
+}
+
+function renderSnifferRules() {
+  const body = $("snifferRuleRows");
+  body.replaceChildren();
+  if (!snifferRules.length) {
+    emptyTableRow(body, 4, "Ingen gemte regler");
+    return;
+  }
+  for (const rule of snifferRules) {
+    const row = document.createElement("tr");
+    row.classList.toggle("selected", rule.id === selectedSnifferRule);
+    for (const value of [rule.name, rule.marker, rule.length === null ? "Afslutningstekst" : "Antal tegn", rule.length ?? rule.terminator]) {
+      const cell = document.createElement("td");
+      cell.textContent = String(value);
+      row.append(cell);
+    }
+    row.addEventListener("click", () => {
+      selectedSnifferRule = rule.id;
+      selectedSnifferVersion = rule.version;
+      $("snifferRuleName").value = rule.name;
+      $("snifferRuleMarker").value = rule.marker;
+      $("snifferRuleEnd").value = rule.length === null ? "terminator" : "length";
+      $("snifferRuleLength").value = rule.length === null ? "" : String(rule.length);
+      $("snifferRuleTerminator").value = rule.terminator || "";
+      $("deleteSnifferRule").disabled = false;
+      updateSnifferEndFields();
+      renderSnifferRules();
+    });
+    body.append(row);
+  }
+}
+
+async function refreshSnifferRules() {
+  const data = await api("/api/sniffer/rules");
+  snifferRules = data.rules;
+  snifferRulesLoaded = true;
+  if (selectedSnifferRule !== null && !snifferRules.some((rule) => rule.id === selectedSnifferRule && rule.version === selectedSnifferVersion)) {
+    resetSnifferRule();
+    showToast("Den valgte regel er ændret eller fjernet; vælg den igen.", true);
+  } else renderSnifferRules();
+}
+
+function clearSnifferPreview(message = "Ingen prøve udført") {
+  snifferPreviewGeneration++;
+  $("snifferResultSource").textContent = message;
+  const body = $("snifferPreviewRows");
+  body.replaceChildren();
+  emptyTableRow(body, 3, message);
+}
+
+async function saveSnifferRule() {
+  const name = $("snifferRuleName").value.trim();
+  const marker = $("snifferRuleMarker").value;
+  const lengthMode = $("snifferRuleEnd").value === "length";
+  const rawLength = $("snifferRuleLength").value;
+  const terminator = $("snifferRuleTerminator").value;
+  if (!name || !marker) throw new Error("Angiv både navn og søgetekst.");
+  if (lengthMode && (!rawLength || !Number.isInteger(Number(rawLength)) || Number(rawLength) < 1 || Number(rawLength) > 100000)) {
+    throw new Error("Antal tegn skal være mellem 1 og 100000.");
+  }
+  if (!lengthMode && !terminator) throw new Error("Angiv en afslutningstekst.");
+  const id = selectedSnifferRule;
+  const payload = { name, marker, length: lengthMode ? Number(rawLength) : null, terminator: lengthMode ? null : terminator, version: selectedSnifferVersion };
+  $("saveSnifferRule").disabled = true;
+  try {
+    const saved = await api(id === null ? "/api/sniffer/rules" : `/api/sniffer/rules/${id}`, {
+      method: id === null ? "POST" : "PUT", body: JSON.stringify(payload),
+    });
+    selectedSnifferRule = saved.id;
+    selectedSnifferVersion = saved.version;
+    await refreshSnifferRules();
+    $("deleteSnifferRule").disabled = false;
+    clearSnifferPreview("Reglerne er ændret; udfør prøven igen.");
+    showToast("Reglen er gemt.");
+  } finally {
+    $("saveSnifferRule").disabled = false;
+  }
+}
+
+async function previewSnifferRules() {
+  const generation = ++snifferPreviewGeneration;
+  const data = await api("/api/sniffer/preview", {
+    method: "POST", body: JSON.stringify({ text: $("snifferTestData").value }),
+  });
+  if (generation !== snifferPreviewGeneration) return;
+  renderSnifferResults(data.results);
+  $("snifferResultSource").textContent = "Manuel prøve af testfeltet.";
+}
+
+function renderSnifferResults(results) {
+  const body = $("snifferPreviewRows");
+  body.replaceChildren();
+  if (!results.length) {
+    emptyTableRow(body, 3, "Ingen gemte regler");
+    return;
+  }
+  const statuses = { matched: "Fundet", not_found: "Ikke fundet", incomplete: "Ufuldstændig", invalid_utf8: "Ugyldig UTF-8", unreliable: "Usikre printdata" };
+  for (const result of results) {
+    const row = document.createElement("tr");
+    for (const value of [result.name, statuses[result.status] || result.status, result.value === null ? "—" : result.value]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    body.append(row);
+  }
+}
+
+function formatJobTime(seconds) {
+  return new Date(seconds * 1000).toLocaleString("da-DK");
+}
+
+function replaceSelectOptions(select, placeholder, entries) {
+  const selected = select.value;
+  select.replaceChildren(new Option(placeholder, ""));
+  for (const [value, label] of entries) select.add(new Option(label, value));
+  if (entries.some(([value]) => value === selected)) select.value = selected;
+}
+
+function renderLinkedEpcs() {
+  const job = jobLogJobs.find((entry) => entry.id === $("jobLogSelect").value);
+  const links = job ? job.epcs : [];
+  replaceSelectOptions($("jobLinkedSelect"), "Vælg kobling", links.map((link) => [
+    String(link.observation_id), `${link.epc} · ${formatJobTime(link.observed_at)}`,
+  ]));
+}
+
+async function refreshJobLog() {
+  if (jobLogBusy) return;
+  if (authRequired && !localStorage.getItem("rfid-app-token")) {
+    $("jobLogStatus").textContent = "Loggen afventer login.";
+    return;
+  }
+  jobLogBusy = true;
+  try {
+    const data = await api("/api/sniffer/log");
+    jobLogJobs = data.jobs;
+    replaceSelectOptions($("jobLogSelect"), "Vælg job", data.jobs.map((job) => [
+      job.id, `${formatJobTime(job.created_at)} · ${job.id.slice(0, 8)}`,
+    ]));
+    replaceSelectOptions($("jobObservationSelect"), "Vælg RFID-observation", data.observations.map((observation) => [
+      String(observation.id), `${observation.epc} · ${formatJobTime(observation.first_seen)}`,
+    ]));
+    renderLinkedEpcs();
+    const body = $("jobLogRows");
+    body.replaceChildren();
+    if (!data.jobs.length) emptyTableRow(body, 4, "Ingen gemte job");
+    const statuses = { pending: "Afventer afklaring", linked: "Manuelt koblet", no_tag: "Manuelt NoTag" };
+    for (const job of data.jobs) {
+      const row = document.createElement("tr");
+      const values = job.results === null
+        ? (job.error || "Udtræk afventer")
+        : job.results.map((item) => `${item.name}: ${item.value === null ? item.status : item.value}`).join("; ");
+      const status = `${statuses[job.resolution] || job.resolution}${job.incomplete ? " · usikre printdata" : ""}`;
+      for (const value of [formatJobTime(job.created_at), values, job.epcs.map((item) => item.epc).join(", "), status]) {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        row.append(cell);
+      }
+      body.append(row);
+    }
+    const readerStates = {
+      running: "RFID-læseren har svaret. Inventeringen genstartes hvert 30. sekund; tags kan overses, især under pausen. Svaret garanterer ikke fortsat læsning.",
+      starting: "RFID-inventering startet; afventer svar fra læseren. Tags kan overses.",
+      restarting: "RFID-inventering genstartes; tags kan overses under pausen.",
+      waiting_job: "RFID-opsamling afventer første printjob.",
+      bridge_off: "RFID-opsamling afventer aktiv bridge.",
+      disconnected: "RFID-læseren er ikke forbundet.",
+      busy: "RFID-læseren bruges manuelt; automatisk opsamling er ikke aktiv.",
+      stopped: "RFID-opsamling er stoppet.",
+      error: `RFID-opsamling fejlede: ${data.rfid.error || "ukendt fejl"}`,
+    };
+    let status = readerStates[data.rfid.status] || "RFID-status er ukendt.";
+    if (data.rfid.dropped) status += ` ${data.rfid.dropped} RFID-læsninger kunne ikke gemmes.`;
+    if (data.rfid.storage_error) status += ` ${data.rfid.storage_error}`;
+    $("jobRfidStatus").textContent = status;
+    $("jobLogStatus").textContent = "Loggen viser seneste job; poster slettes efter 1 døgn.";
+  } catch (error) {
+    $("jobLogStatus").textContent = `Loggen kan ikke opdateres: ${error.message || String(error)}`;
+    $("jobRfidStatus").textContent = "RFID-status kan ikke hentes.";
+  } finally {
+    jobLogBusy = false;
+  }
+}
+
+async function exportJobLog() {
+  const headers = new Headers();
+  const token = authRequired ? localStorage.getItem("rfid-app-token") : null;
+  if (token) headers.set("X-API-Token", token);
+  const response = await fetch("/api/sniffer/log.csv", { headers });
+  if (!response.ok) throw new Error(`CSV-eksport fejlede: HTTP ${response.status}`);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "datasniffer-log.csv";
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function bindActions() {
+  $("printerAddress").addEventListener("input", () => {
+    const changed = $("printerAddress").value.trim() !== savedPrinterAddress;
+    $("savePrinterAddress").disabled = !changed;
+    if (changed) $("startBridge").disabled = true;
+    else refreshBridge();
+  });
+  $("savePrinterAddress").addEventListener("click", () => guarded(async () => {
+    const match = /^([^:]+):([0-9]+)$/.exec($("printerAddress").value.trim());
+    if (!match) throw new Error("Angiv printeradressen som IPv4:port.");
+    await api("/api/bridge/config", {
+      method: "POST",
+      body: JSON.stringify({ ip: match[1], port: Number(match[2]) }),
+    });
+    savedPrinterAddress = null;
+    await refreshBridge();
+    showToast("Printeradressen er gemt.");
+  }));
+  $("startBridge").addEventListener("click", () => guarded(async () => {
+    if (!window.confirm("Start bridge? Forbindelsen kan afbrydes kortvarigt. Åbn printeradressen inden 2 minutter.")) return;
+    await changeBridge("start");
+  }));
+  $("stopBridge").addEventListener("click", () => guarded(() => changeBridge("stop")));
+  $("snifferRuleEnd").addEventListener("change", updateSnifferEndFields);
+  $("newSnifferRule").addEventListener("click", resetSnifferRule);
+  $("refreshSnifferRules").addEventListener("click", () => guarded(refreshSnifferRules));
+  $("saveSnifferRule").addEventListener("click", () => guarded(saveSnifferRule));
+  $("deleteSnifferRule").addEventListener("click", () => guarded(async () => {
+    const id = selectedSnifferRule;
+    if (id === null) throw new Error("Vælg en regel først.");
+    if (!window.confirm("Fjern den valgte regel?")) return;
+    await api(`/api/sniffer/rules/${id}?version=${selectedSnifferVersion}`, { method: "DELETE" });
+    resetSnifferRule();
+    await refreshSnifferRules();
+    clearSnifferPreview("Reglerne er ændret; udfør prøven igen.");
+    showToast("Reglen er fjernet.");
+  }));
+  $("previewSnifferRules").addEventListener("click", () => guarded(previewSnifferRules));
+  $("jobLogSelect").addEventListener("change", renderLinkedEpcs);
+  $("refreshJobLog").addEventListener("click", refreshJobLog);
+  $("exportJobLog").addEventListener("click", () => guarded(exportJobLog));
+  $("linkJobEpc").addEventListener("click", () => guarded(async () => {
+    const job = $("jobLogSelect").value;
+    const observation = $("jobObservationSelect").value;
+    if (!job || !observation) throw new Error("Vælg både job og RFID-observation.");
+    if (!window.confirm("Bekræft den manuelle kobling. Tidspunkt alene beviser ikke, at EPC'en tilhører jobbet.")) return;
+    await api(`/api/sniffer/log/${job}/epcs`, { method: "POST", body: JSON.stringify({ observation_id: Number(observation) }) });
+    await refreshJobLog();
+  }));
+  $("unlinkJobEpc").addEventListener("click", () => guarded(async () => {
+    const job = $("jobLogSelect").value;
+    const observation = $("jobLinkedSelect").value;
+    if (!job || !observation) throw new Error("Vælg job og kobling.");
+    if (!window.confirm("Fjern den valgte EPC-kobling?")) return;
+    await api(`/api/sniffer/log/${job}/epcs/${observation}`, { method: "DELETE" });
+    await refreshJobLog();
+  }));
+  $("markJobNoTag").addEventListener("click", () => guarded(async () => {
+    const job = $("jobLogSelect").value;
+    if (!job) throw new Error("Vælg et job.");
+    if (!window.confirm("Markér dette job som manuelt afklaret uden tag?")) return;
+    await api(`/api/sniffer/log/${job}/no-tag`, { method: "POST", body: "{}" });
+    await refreshJobLog();
+  }));
+  $("clearJobNoTag").addEventListener("click", () => guarded(async () => {
+    const job = $("jobLogSelect").value;
+    if (!job) throw new Error("Vælg et job.");
+    await api(`/api/sniffer/log/${job}/no-tag`, { method: "DELETE" });
+    await refreshJobLog();
+  }));
   $("refreshVersions").addEventListener("click", () => guarded(getVersions));
   $("refreshPorts").addEventListener("click", () => guarded(refreshPorts));
   $("connectButton").addEventListener("click", () => guarded(setConnected));
@@ -535,6 +1090,18 @@ function bindActions() {
     if ($("selectBeforeRead").checked) await ensureTagSelected();
     const result = await api("/api/inventory/single", { method: "POST" });
     await updateState(result.state);
+    const frames = (result.responses || []).map(responsePayload).filter(Boolean);
+    const error = frames.find((frame) => frame.type === 0x01 && frame.command === 0xFF);
+    if (error) {
+      if (error.payload.length === 1 && error.payload[0] === 0x15) {
+        throw new Error("Enkeltlæsning: intet gyldigt tag i et svar, eller CRC-fejl. Tidligere læste tags bliver i tabellen.");
+      }
+      throw new Error(`Enkeltlæsning fejlede: ${bytesToHex(error.payload) || "ukendt fejl"}.`);
+    }
+    if (!frames.some((frame) => frame.type === 0x02 && frame.command === 0x22 && frame.payload.length >= 5)) {
+      throw new Error("Enkeltlæsning: intet gyldigt svar fra læseren.");
+    }
+    showToast("Enkeltlæsning: tagsvar modtaget.");
   }));
   $("readMulti").addEventListener("click", () => guarded(async () => {
     const count = numberValue("multiCount", "Antal forespørgsler", 1, 65535);
@@ -658,77 +1225,90 @@ function bindActions() {
     await sendFrame(0x0C, selectPayload());
   }));
   $("getSelect").addEventListener("click", () => guarded(async () => {
-    const data = firstPayload(await sendFrame(0x0B), 0x0B);
-    if (data) showToast(`Select-svar: ${bytesToHex(data)}`);
+    selectFromResponse(await sendFrame(0x0B));
+    showToast("Select-parametre hentet.");
   }));
   $("setSelectMode").addEventListener("click", () => guarded(async () => {
     requireConfigEnabled();
-    await sendFrame(0x12, [0x01]);
+    const mode = numberValue("selectMode", "Select-tilstand", 0, 2);
+    requireConfirmation(await sendFrame(0x12, [mode]), 0x12, "Select-tilstand");
   }));
   $("readMemory").addEventListener("click", () => guarded(readMemory));
   $("writeMemory").addEventListener("click", () => guarded(writeMemory));
   $("lockTag").addEventListener("click", () => guarded(async () => {
     if (!selectedEpc) throw new Error("Vælg et tag i EPC-tabellen først.");
-    if (!window.confirm("Send Lock-kommandoen til det valgte tag? Permanent låsning kan ikke fortrydes.")) return;
-    await ensureTagSelected();
     const payload = lockPayload();
     if (payload.slice(4).every((byte) => byte === 0)) throw new Error("Vælg mindst én låsehandling.");
-    const responses = await sendFrame(0x82, payload, 1.5);
-    $("memoryStatus").textContent = responses.length ? "Lock-kommando sendt — kontrollér svaret" : "Intet svar";
+    if (!window.confirm(`Send Lock-kommandoen til ${selectedEpc}? Permanente handlinger kan ikke fortrydes.`)) return;
+    requireTagSuccess(await sendSelectedTagFrame(0x82, payload, 0x82, 1));
+    $("memoryStatus").textContent = "Lock bekræftet af tagget.";
   }));
   $("killTag").addEventListener("click", () => guarded(async () => {
     if ($("killConfirm").value !== "KILL") throw new Error("Skriv KILL for at bekræfte permanent deaktivering.");
     if (!window.confirm(`Deaktivér tag ${selectedEpc || "(intet valgt)"} permanent?`)) return;
-    await ensureTagSelected();
     const password = passwordBytes($("killPassword").value, "Kill password");
-    const responses = await sendFrame(0x65, password, 1.5);
-    $("memoryStatus").textContent = responses.length ? "Kill-kommando sendt — kontrollér svaret" : "Intet svar";
+    requireTagSuccess(await sendSelectedTagFrame(0x65, password, 0x65, 1));
+    $("memoryStatus").textContent = "Kill bekræftet af tagget.";
   }));
   $("blockPermalock").addEventListener("click", () => guarded(async () => {
-    if (!window.confirm("BlockPermalock kan låse brugerblokke permanent. Fortsæt kun med et testtag.")) return;
-    await ensureTagSelected();
-    const password = passwordBytes($("accessPassword").value, "Access password");
-    const pointer = numberValue("blockPointer", "Block-pointer", 0, 0xFFFF);
+    const payload = blockPermalockPayload();
+    const operation = payload[4];
     const range = numberValue("blockRange", "Block-range", 1, 255);
-    const mask = [...bytesFromHex($("blockMask").value, "Block-mask")];
-    const operation = hexByte($("blockOperation").value, "BlockPermalock-operation");
-    const payload = [...password, operation, (pointer >> 8) & 0xFF, pointer & 0xFF, range, ...(operation === 0x01 ? mask : [])];
-    await sendFrame(0xD3, payload, 1.5);
+    if (operation === 1 && !window.confirm(`Lås brugerblokke permanent på ${selectedEpc || "(intet valgt)"}?`)) return;
+    const result = await sendSelectedTagFrame(0xD3, payload, operation === 1 ? 0xD4 : 0xD3, operation === 1 ? 1 : 1 + range * 2);
+    if (operation === 1) {
+      requireTagSuccess(result);
+      showToast("BlockPermalock bekræftet af tagget.");
+    } else {
+      if (result[0] !== range) throw new Error("BlockPermalock-svarets range matcher ikke forespørgslen.");
+      showToast(`Block-låsestatus: ${bytesToHex(result.slice(1))}`);
+    }
   }));
   $("qtCommand").addEventListener("click", () => guarded(async () => {
-    if ($("qtAction").value === "02" && !window.confirm("QT Write ændrer tagindstillinger. Fortsæt kun med et testtag.")) return;
-    await ensureTagSelected();
-    const password = passwordBytes($("accessPassword").value, "Access password");
-    const action = hexByte($("qtAction").value, "QT-kommando");
-    const payload = [...password, action, $("qtSr").checked ? 1 : 0, $("qtMem").checked ? 1 : 0, 0x00];
-    await sendFrame(0xE5, payload, 1.5);
+    const payload = qtPayload();
+    const action = payload[4];
+    if (action === 1 && !window.confirm(`Ændr QT-indstillinger på ${selectedEpc || "(intet valgt)"}?`)) return;
+    const result = await sendSelectedTagFrame(0xE5, payload, action === 1 ? 0xE6 : 0xE5, action === 1 ? 1 : 2);
+    if (action === 1) {
+      requireTagSuccess(result);
+      showToast("QT Write bekræftet af tagget.");
+    } else {
+      showToast(`QT control word: ${bytesToHex(result)}`);
+    }
   }));
   $("nxpProtect").addEventListener("click", () => guarded(async () => {
-    await ensureTagSelected();
-    await sendFrame(0xE1, [...passwordBytes($("accessPassword").value, "Access password"), 0x00], 1.5);
+    if (!window.confirm(`Aktivér ReadProtect på ${selectedEpc || "(intet valgt)"}?`)) return;
+    requireTagSuccess(await sendSelectedTagFrame(0xE1, [...passwordBytes($("accessPassword").value, "Access password"), 0x00], 0xE1, 1));
+    showToast("ReadProtect bekræftet af tagget.");
   }));
   $("nxpReset").addEventListener("click", () => guarded(async () => {
-    await ensureTagSelected();
-    await sendFrame(0xE1, [...passwordBytes($("accessPassword").value, "Access password"), 0x01], 1.5);
+    if (!window.confirm(`Nulstil ReadProtect på ${selectedEpc || "(intet valgt)"}?`)) return;
+    requireTagSuccess(await sendSelectedTagFrame(0xE1, [...passwordBytes($("accessPassword").value, "Access password"), 0x01], 0xE2, 1));
+    showToast("Reset ReadProtect bekræftet af tagget.");
   }));
   $("nxpEas").addEventListener("click", () => guarded(async () => {
     if (!window.confirm("Ændr EAS-status på det valgte NXP-tag?")) return;
-    await ensureTagSelected();
     const easState = hexByte($("nxpEasState").value, "EAS-status");
+    if (easState !== 0 && easState !== 1) throw new Error("Ugyldig EAS-status.");
     const payload = [...passwordBytes($("accessPassword").value, "Access password"), easState];
-    await sendFrame(0xE3, payload, 1.5);
+    requireTagSuccess(await sendSelectedTagFrame(0xE3, payload, 0xE3, 1));
+    showToast("Change EAS bekræftet af tagget.");
   }));
   $("nxpAlarm").addEventListener("click", () => guarded(async () => {
     await ensureTagSelected();
     const responses = await sendFrame(0xE4, [], 1.5);
-    showToast(responses.length ? `EAS-svar: ${responses.join(" | ")}` : "Intet EAS-svar modtaget.");
+    const error = firstPayload(responses, 0xFF);
+    if (error) throw new Error(`EAS Alarm blev afvist: ${bytesToHex(error)}.`);
+    const result = firstPayload(responses, 0xE4);
+    if (!result || result.length !== 8) throw new Error("Intet gyldigt EAS Alarm-svar modtaget.");
+    showToast(`EAS Alarm: ${bytesToHex(result)}`);
   }));
   $("nxpConfig").addEventListener("click", () => guarded(async () => {
-    if (!window.confirm("Skriv nyt NXP-config-word til valgt tag?")) return;
-    await ensureTagSelected();
     const configWord = [...bytesFromHex($("configWord").value, "Config-word")];
     if (configWord.length !== 2) throw new Error("Config-word skal være to bytes.");
-    await sendFrame(0xE0, [...passwordBytes($("accessPassword").value, "Access password"), ...configWord], 1.5);
+    if (configWord.some((byte) => byte !== 0) && !window.confirm(`Invertér de valgte config-bits på ${selectedEpc || "(intet valgt)"}?`)) return;
+    const result = await sendSelectedTagFrame(0xE0, [...passwordBytes($("accessPassword").value, "Access password"), ...configWord], 0xE0, 2);
+    showToast(`NXP config-word: ${bytesToHex(result)}`);
   }));
   $("scanJammer").addEventListener("click", () => guarded(() => runSpectrum(0xF2, "jammerChart", "Blokeringsscan")));
   $("scanRssi").addEventListener("click", () => guarded(() => runSpectrum(0xF3, "rssiChart", "RSSI-scan")));
@@ -762,6 +1342,9 @@ tokenForm.addEventListener("submit", (event) => {
     sessionStorage.removeItem("rfid-app-token");
     $("tokenInput").value = "";
     tokenDialog.close("ok");
+    await guarded(confirmBridgeIfNeeded);
+    await refreshBridge();
+    await refreshWanIp();
     await refreshPorts();
     await refreshState();
   });
@@ -781,12 +1364,25 @@ bindActions();
     const config = await api("/api/config");
     authRequired = config.auth_required;
     $("forgetToken").hidden = !authRequired;
+    $("noAuthWarning").hidden = authRequired;
     refreshTimer = setInterval(() => {
       if (!authRequired || localStorage.getItem("rfid-app-token")) guarded(refreshState);
     }, 1200);
+    setInterval(() => {
+      if (!authRequired || localStorage.getItem("rfid-app-token")) refreshWanIp();
+      else $("wanIp").textContent = "WAN IP: Afventer login";
+    }, 10000);
     if (authRequired && !localStorage.getItem("rfid-app-token")) showTokenDialog();
+    if (!authRequired || localStorage.getItem("rfid-app-token")) await guarded(confirmBridgeIfNeeded);
+    await refreshBridge();
+    await refreshCapture();
+    await refreshJobLog();
+    setInterval(refreshBridge, 5000);
+    setInterval(refreshCapture, 1500);
+    setInterval(refreshJobLog, 3000);
     drawChart("jammerChart", chartValues.jammerChart);
     drawChart("rssiChart", chartValues.rssiChart);
+    if (!authRequired || localStorage.getItem("rfid-app-token")) await refreshWanIp();
     await refreshPorts();
     await refreshState();
   } catch (error) {

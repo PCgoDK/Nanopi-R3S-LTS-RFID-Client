@@ -1,0 +1,26 @@
+[Unit]
+Description=Passive NanoPi printer data capture
+After=nanopi-rfid-bridge-session.service
+BindsTo=nanopi-rfid-bridge-session.service
+PartOf=nanopi-rfid-bridge-session.service
+
+[Service]
+Type=simple
+User=rfid-client
+Group=rfid-client
+RuntimeDirectory=nanopi-rfid-capture
+RuntimeDirectoryMode=0750
+Environment=PYTHONPATH=/opt/nanopi-rfid-client
+Environment=RFID_STATE_DIR=/var/lib/nanopi-rfid-client/sniffer
+ExecStart=/usr/bin/python3 /opt/nanopi-rfid-client/bridge/print_capture.py
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nanopi-rfid-client/sniffer
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_PACKET
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15

@@ -8,6 +8,7 @@ User=rfid-client
 Group=rfid-client
 SupplementaryGroups=dialout
 WorkingDirectory=/opt/nanopi-rfid-client
+Environment=RFID_STATE_DIR=/var/lib/nanopi-rfid-client/sniffer
 EnvironmentFile=/etc/nanopi-rfid-client/nanopi-rfid-client.env
 ExecStart=/opt/nanopi-rfid-client/venv/bin/python -m app
 Restart=on-failure
@@ -20,7 +21,7 @@ ProtectSystem=strict
 ReadWritePaths=/var/lib/nanopi-rfid-client
 RestrictSUIDSGID=true
 LockPersonality=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
